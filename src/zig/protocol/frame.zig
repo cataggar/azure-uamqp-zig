@@ -27,8 +27,12 @@ pub const FrameHeader = struct {
     channel: u16,
 
     /// Size of the frame body (total size minus header as indicated by doff).
+    /// Requires a header from `parse`, which rejects a `doff` that does not fit
+    /// within `size`.
     pub fn bodySize(self: FrameHeader) u32 {
-        return self.size - @as(u32, self.doff) * 4;
+        const header_bytes = @as(u32, self.doff) * 4;
+        std.debug.assert(header_bytes <= self.size);
+        return self.size - header_bytes;
     }
 
     /// Parse a frame header from 8 bytes.
@@ -40,6 +44,8 @@ pub const FrameHeader = struct {
 
         if (size < frame_header_size) return error.InvalidFrame;
         if (doff < 2) return error.InvalidFrame;
+        // The extended header has to fit inside the frame, or `bodySize` underflows.
+        if (@as(u32, doff) * 4 > size) return error.InvalidFrame;
 
         return .{
             .size = size,
@@ -92,6 +98,27 @@ test "frame header body size" {
 test "frame header validates minimum" {
     var data = [_]u8{ 0, 0, 0, 4, 1, 0, 0, 0 }; // size=4 (too small for doff=2), doff=1 (too small)
     try std.testing.expectError(error.InvalidFrame, FrameHeader.parse(&data));
+}
+
+test "a doff beyond the frame size is rejected" {
+    // Eight bytes off the wire: an 8-byte frame claiming an 800-byte extended
+    // header. Both floors accept it, and bodySize() would compute 8 - 800.
+    var data = [_]u8{ 0, 0, 0, 8, 200, 0, 0, 0 };
+    try std.testing.expectError(error.InvalidFrame, FrameHeader.parse(&data));
+}
+
+test "doff is accepted exactly up to the frame size" {
+    const size: u32 = 32;
+    var doff: u8 = 2;
+    while (doff < 16) : (doff += 1) {
+        var data = [_]u8{ 0, 0, 0, @intCast(size), doff, 0, 0, 0 };
+        if (@as(u32, doff) * 4 <= size) {
+            const hdr = try FrameHeader.parse(&data);
+            try std.testing.expectEqual(size - @as(u32, doff) * 4, hdr.bodySize());
+        } else {
+            try std.testing.expectError(error.InvalidFrame, FrameHeader.parse(&data));
+        }
+    }
 }
 
 test "AMQP protocol header" {

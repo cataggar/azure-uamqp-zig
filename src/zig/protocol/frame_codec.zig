@@ -244,6 +244,20 @@ test "FrameCodec handles partial reads" {
     try std.testing.expectEqualStrings("hi", test_received_body.?);
 }
 
+test "a hostile frame header is rejected by the codec" {
+    const allocator = std.testing.allocator;
+
+    var codec = FrameCodec.init(allocator, 4096);
+    defer codec.deinit();
+
+    try codec.subscribe(.amqp, testCallback, null);
+
+    // Under max_frame_size, so that guard never sees it; the body size is what
+    // is hostile. Left unchecked this reaches ensureTotalCapacity as ~4 GiB.
+    const hostile = [_]u8{ 0, 0, 0, 8, 200, 0, 0, 0 };
+    try std.testing.expectError(error.InvalidFrame, codec.receiveBytes(&hostile));
+}
+
 test "FrameCodec encodeFrame" {
     const allocator = std.testing.allocator;
 
