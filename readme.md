@@ -87,13 +87,33 @@ _ = try sender.send(&message, .{});
 ## Building
 
 ```sh
-zig build                    # static library + examples
+zig build                    # static library, examples, interop client
 zig build test --summary all # the test suite
-zig fmt src examples build.zig
+zig fmt src examples interop build.zig
 ```
 
 CI runs the same steps on Linux, Windows and macOS, plus the suite under
 `-Doptimize=ReleaseSafe`.
+
+### Interop
+
+The test suite talks to a peer written from the same reading of the spec as
+the code it checks, so the two can agree and both be wrong.
+`interop/main.zig` is the answer to that: a client that opens a real socket to
+a broker nobody here wrote, sends a message and reads it back over the whole
+stack — SASL, open, begin, attach, transfer, disposition, and an orderly
+close.
+
+```sh
+pip install python-qpid-proton
+python3 interop/broker.py 127.0.0.1:5672 &   # Apache Qpid Proton
+AMQP_PORT=5672 zig build interop
+```
+
+It is configured by environment: `AMQP_HOST`, `AMQP_PORT`, `AMQP_USER` (SASL
+PLAIN when set, ANONYMOUS when not), `AMQP_PASSWORD`, `AMQP_ADDRESS` and
+`AMQP_TIMEOUT_MS`. Point it at anything that speaks AMQP 1.0. CI runs it
+against Apache Qpid Proton and Apache ActiveMQ Artemis.
 
 ## Changes
 

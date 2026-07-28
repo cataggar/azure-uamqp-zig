@@ -60,6 +60,12 @@ pub const TestPeer = struct {
         self.sent.clearRetainingCapacity();
     }
 
+    /// Drop the first `n` bytes, so a test can assert on a prefix and then go
+    /// on decoding what follows it as frames.
+    pub fn consume(self: *TestPeer, n: usize) void {
+        self.sent.replaceRangeAssumeCapacity(0, n, &.{});
+    }
+
     /// The bytes a peer would send for one performative on a channel.
     pub fn frame(self: *TestPeer, channel: u16, performative: defs.Performative) ![]const u8 {
         return self.framePayload(channel, performative, &.{});

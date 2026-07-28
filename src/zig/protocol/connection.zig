@@ -255,11 +255,32 @@ pub const Connection = struct {
     ///
     /// The Open performative follows once the peer's header comes back: it may
     /// not be sent before the headers have been exchanged (§2.4.1).
+    ///
+    /// A peer is free to send its header without waiting for ours, and behind
+    /// SASL that is the common case — Artemis pipelines its header into the
+    /// same TCP segment as the SASL outcome, so the exchange is finished and
+    /// the Open already sent by the time the application gets control back.
+    /// Asking for something that has happened is not an error, so this is
+    /// satisfied by a connection already on its way open.
     pub fn open(self: *Connection) !void {
-        if (self.state != .start) return error.InvalidState;
-        try self.ensureSubscribed();
-        try self.sendBytes(&frame_mod.amqp_header);
-        self.setState(.hdr_sent);
+        switch (self.state) {
+            .start => {
+                try self.ensureSubscribed();
+                try self.sendBytes(&frame_mod.amqp_header);
+                self.setState(.hdr_sent);
+            },
+            .hdr_sent,
+            .hdr_rcvd,
+            .hdr_exch,
+            .open_pipe,
+            .open_sent,
+            .open_rcvd,
+            .opened,
+            => {},
+            // Closing, closed, or broken: there is nothing here to open, and a
+            // second connection is a second `Connection`.
+            else => return error.InvalidState,
+        }
     }
 
     /// Send a Close performative to gracefully shut down.
@@ -694,6 +715,57 @@ test "opening exchanges headers and Opens" {
     try testing.expectEqual(@as(u32, 4096), conn.remote_max_frame_size);
     try testing.expectEqual(@as(u16, 8), conn.remote_channel_max);
     try testing.expectEqual(@as(?u32, 60000), conn.remote_idle_timeout_ms);
+}
+
+test "a peer that sends its header first still lets the application open" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var conn = Connection.init(allocator, "container-1", "example.host", .{});
+    defer conn.deinit();
+    peer.attach(&conn);
+
+    // Behind SASL a broker commonly pipelines its AMQP header into the same
+    // read as the SASL outcome, so it lands before anything asked for the
+    // connection. Answering it is right -- the exchange completes and the Open
+    // goes out -- but it used to leave `open()` permanently unusable, and the
+    // application has no way to see that coming: it depends on how the peer
+    // packetized its bytes. Apache ActiveMQ Artemis does this; Qpid Proton
+    // happened not to, which is why only one of the two ever failed.
+    try conn.onBytesReceived(&frame_mod.amqp_header);
+    try testing.expectEqual(ConnectionState.open_sent, conn.state);
+
+    // Our header went out ahead of our Open, in that order.
+    const header_len = frame_mod.amqp_header.len;
+    try testing.expectEqualSlices(u8, &frame_mod.amqp_header, peer.written()[0..header_len]);
+    peer.consume(header_len);
+    var sent = try peer.lastPerformative();
+    defer sent.deinit();
+    try testing.expectEqualStrings("container-1", sent.value.open.container_id);
+
+    // The application asks afterwards, and gets a connection that is opening
+    // rather than an error -- and no second header or Open goes out.
+    const before = peer.written().len;
+    try conn.open();
+    try testing.expectEqual(ConnectionState.open_sent, conn.state);
+    try testing.expectEqual(before, peer.written().len);
+
+    try conn.onBytesReceived(try peer.frame(0, .{ .open = .{ .container_id = "peer" } }));
+    try testing.expectEqual(ConnectionState.opened, conn.state);
+}
+
+test "opening a connection that is closing is still refused" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var conn = Connection.init(allocator, "c", null, .{});
+    defer conn.deinit();
+    peer.attach(&conn);
+
+    try conn.open();
+    try conn.onBytesReceived(&frame_mod.amqp_header);
+    try conn.close(null, null);
+    try testing.expectError(error.InvalidState, conn.open());
 }
 
 test "the peer's header may arrive one byte at a time" {
