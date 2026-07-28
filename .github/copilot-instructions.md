@@ -1,22 +1,17 @@
 # azure-uamqp-zig
 
 An AMQP 1.0 client library, ported from `Azure/azure-uamqp-c` v1.2.12 to idiomatic Zig
-(`zig 0.16.0`). The Zig implementation is the live code; the original C tree is kept in
-history for reference.
+(`zig 0.16.0`). Everything here is Zig: the C tree it was ported from has been deleted.
 
-## Live code vs. legacy C tree
+## Layout
 
-- **Live:** `build.zig`, `build.zig.zon`, `src/zig/**`, `examples/*.zig`.
-- **Legacy (upstream C, not built by anything here):** `src/*.c`, `inc/`, `tests/`,
-  `samples/`. There is no C build any more — CMake, the `deps/` submodules, the Jenkins
-  and packaging scripts, and the C# definition generator were removed once nothing could
-  build them. Fix bugs by changing the Zig code, not the C code.
+- `build.zig`, `build.zig.zon`, `src/zig/**`, `examples/*.zig` — all of the code.
 - `codegen/amqp_definitions.xml` (with its `.xsd`/`.dtd`) is the machine-readable AMQP 1.0
   definition that generated the C `amqp_definitions.c`. It is kept as the source of truth
   for `src/zig/protocol/definitions.zig`.
-- `devdoc/*_requirements.md` are the upstream per-module requirement specs. They still
-  describe the intended behavior accurately and are the best reference when porting or
-  extending a module (`connection_requirements.md`, `amqpvalue_requirements.md`, ...).
+- The C sources, headers, unit tests, `devdoc/*_requirements.md` specs and samples are in
+  git history up to the commit that removed them; `git log -- <path>` still finds them
+  when a ported module's original behavior needs checking.
 
 ## Build, test, format
 
