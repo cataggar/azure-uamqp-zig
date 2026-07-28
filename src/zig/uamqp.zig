@@ -12,6 +12,7 @@ pub const MapEntry = types.MapEntry;
 // Encoding / decoding
 pub const encoder = @import("types/encoder.zig");
 pub const decoder = @import("types/decoder.zig");
+pub const to_string = @import("types/to_string.zig");
 
 // Protocol
 pub const frame = @import("protocol/frame.zig");
