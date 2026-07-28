@@ -1,43 +1,13 @@
-﻿################################################################################
-# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
-################################################################################
-
-**/bin/*
-**/obj/*
-*.lastbuildstate
-*.log
-*.opensdf
-*.sdf
-*.suo
-*.~vsdx
-*.lib
-*.pdb
-*.idb
-*.obj
-*.tlog
-*.cache
-*.exe
-*.ilk
-*.TMP
-*.zip
-*.ipch
-*.pch
-*.user
-*.codeanalysis
-*.codeanalysisast
-*.lastcodeanalysissucceeded
-*.dll
-*.config
-*.coverage
-*.exp
-*.i
-/cmake*
-/build
-
-/.vscode/*
-/**/.vs/*
-
 # Zig
-zig-out/
-zig-cache/
 .zig-cache/
+zig-cache/
+zig-out/
+
+# Editors
+/.vscode/
+/.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
