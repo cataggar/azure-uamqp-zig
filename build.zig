@@ -70,4 +70,22 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_interop.addArgs(args);
     const interop_step = b.step("interop", "Run the interop check against a broker");
     interop_step.dependOn(&run_interop.step);
+
+    // Benchmarks. Always ReleaseFast: a debug build measures the allocator and
+    // the safety checks rather than the codec, which is worse than no number
+    // at all because it looks like one.
+    const bench_mod = b.createModule(.{
+        .root_source_file = b.path("bench/main.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    bench_mod.addImport("uamqp", lib_mod);
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = bench_mod,
+    });
+    const run_bench = b.addRunArtifact(bench_exe);
+    run_bench.step.dependOn(&bench_exe.step);
+    const bench_step = b.step("bench", "Measure the codec and the send path");
+    bench_step.dependOn(&run_bench.step);
 }
