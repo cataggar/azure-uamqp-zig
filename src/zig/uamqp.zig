@@ -31,6 +31,7 @@ pub const sasl = struct {
     pub const mechanism = @import("sasl/mechanism.zig");
     pub const anonymous = @import("sasl/anonymous.zig");
     pub const plain = @import("sasl/plain.zig");
+    pub const mssbcbs = @import("sasl/mssbcbs.zig");
     pub const client_io = @import("sasl/client_io.zig");
 };
 
