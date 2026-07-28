@@ -49,7 +49,9 @@ pub const Link = struct {
     name: []const u8,
     role: defs.Role,
     session: *Session,
-    endpoint: *LinkEndpoint,
+    /// Identifies this link's endpoint within the session. Not a pointer:
+    /// the session's endpoint storage moves as endpoints come and go.
+    handle: u32,
 
     // Settle modes
     snd_settle_mode: defs.SenderSettleMode,
@@ -86,14 +88,14 @@ pub const Link = struct {
         source: ?defs.Source,
         target: ?defs.Target,
     ) !Link {
-        const endpoint = try session.createLinkEndpoint(name);
+        const handle = try session.createLinkEndpoint(name);
         return .{
             .allocator = allocator,
             .state = .detached,
             .name = name,
             .role = role,
             .session = session,
-            .endpoint = endpoint,
+            .handle = handle,
             .snd_settle_mode = .mixed,
             .rcv_settle_mode = .first,
             .source = source,
@@ -114,7 +116,14 @@ pub const Link = struct {
 
     pub fn deinit(self: *Link) void {
         self.pending_deliveries.deinit(self.allocator);
-        self.session.destroyLinkEndpoint(self.endpoint);
+        self.session.destroyLinkEndpoint(self.handle);
+    }
+
+    /// This link's endpoint in the session, or null once it has been
+    /// destroyed. The pointer is valid only until the session adds or removes
+    /// an endpoint.
+    pub fn endpoint(self: *Link) ?*LinkEndpoint {
+        return self.session.linkEndpoint(self.handle);
     }
 
     /// Initiate link attachment by sending Attach.
@@ -247,4 +256,25 @@ test "Link credit management" {
     link.setLinkCredit(10);
     try std.testing.expect(link.hasCredit());
     try std.testing.expectEqual(@as(u32, 10), link.link_credit);
+}
+
+test "a link finds its endpoint by handle, and drops it on deinit" {
+    const allocator = std.testing.allocator;
+    var conn = Connection.init(allocator, "test", null, .{});
+    defer conn.deinit();
+    var session = Session.init(allocator, &conn, .{});
+    defer session.deinit();
+
+    var first = try Link.init(allocator, &session, "first", .sender, null, null);
+    var second = try Link.init(allocator, &session, "second", .sender, null, null);
+    defer second.deinit();
+
+    // `first` was created before `second` forced the endpoint array to grow.
+    try std.testing.expectEqualStrings("first", first.endpoint().?.name);
+    try std.testing.expectEqualStrings("second", second.endpoint().?.name);
+
+    first.deinit();
+    try std.testing.expect(first.endpoint() == null);
+    try std.testing.expectEqualStrings("second", second.endpoint().?.name);
+    try std.testing.expectEqual(@as(usize, 1), session.link_endpoints.items.len);
 }

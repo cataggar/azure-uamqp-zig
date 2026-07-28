@@ -45,6 +45,7 @@ pub const OnEndpointFrameReceived = *const fn (
 
 /// An endpoint (session) registered on a connection.
 pub const Endpoint = struct {
+    id: u32,
     on_frame_received: OnEndpointFrameReceived,
     context: ?*anyopaque,
     incoming_channel: ?u16 = null,
@@ -72,6 +73,7 @@ pub const Connection = struct {
 
     // Endpoints (sessions)
     endpoints: std.ArrayList(Endpoint),
+    next_endpoint_id: u32,
 
     // Timing
     last_frame_received_ms: i64,
@@ -108,6 +110,7 @@ pub const Connection = struct {
             .remote_idle_timeout_ms = null,
             .frame_codec = FrameCodec.init(allocator, opts.max_frame_size),
             .endpoints = .empty,
+            .next_endpoint_id = 0,
             // TODO: replace with proper clock source; zero placeholder for now
             .last_frame_received_ms = 0,
             .last_frame_sent_ms = 0,
@@ -139,13 +142,42 @@ pub const Connection = struct {
         self.on_state_changed_context = context;
     }
 
-    /// Register an endpoint (session) on this connection.
-    pub fn createEndpoint(self: *Connection, callback: OnEndpointFrameReceived, context: ?*anyopaque) !*Endpoint {
+    /// Register an endpoint (session) on this connection and return its id.
+    ///
+    /// Endpoints are addressed by id, never by a stored pointer: the backing
+    /// array moves when it grows, and removing an endpoint shifts the ones
+    /// after it. Look one up with `endpoint` and treat that pointer as valid
+    /// only until the next call that adds or removes an endpoint.
+    pub fn createEndpoint(self: *Connection, callback: OnEndpointFrameReceived, context: ?*anyopaque) !u32 {
+        const id = self.next_endpoint_id;
         try self.endpoints.append(self.allocator, .{
+            .id = id,
             .on_frame_received = callback,
             .context = context,
         });
-        return &self.endpoints.items[self.endpoints.items.len - 1];
+        self.next_endpoint_id += 1;
+        return id;
+    }
+
+    /// Look up an endpoint by id. The pointer is valid only until the next
+    /// call that adds or removes an endpoint.
+    pub fn endpoint(self: *Connection, id: u32) ?*Endpoint {
+        for (self.endpoints.items) |*ep| {
+            if (ep.id == id) return ep;
+        }
+        return null;
+    }
+
+    /// Unregister an endpoint. Does nothing if the id is unknown, so
+    /// destroying twice is safe.
+    pub fn destroyEndpoint(self: *Connection, id: u32) void {
+        for (self.endpoints.items, 0..) |*ep, i| {
+            if (ep.id == id) {
+                // Order carries no meaning — endpoints are found by id.
+                _ = self.endpoints.swapRemove(i);
+                return;
+            }
+        }
     }
 
     /// Initiate the connection by sending the AMQP protocol header.
@@ -287,4 +319,35 @@ test "Connection state transitions" {
     try conn.open();
     try std.testing.expectEqual(ConnectionState.hdr_sent, conn.state);
     try std.testing.expect(sent_data != null);
+}
+
+test "endpoints stay addressable as the connection's storage changes" {
+    const allocator = std.testing.allocator;
+    var conn = Connection.init(allocator, "test", null, .{});
+    defer conn.deinit();
+
+    const S = struct {
+        fn onFrame(_: ?*anyopaque, _: defs.Performative, _: u16, _: []const u8) void {}
+    };
+
+    var ids: [64]u32 = undefined;
+    for (&ids, 0..) |*id, i| {
+        id.* = try conn.createEndpoint(S.onFrame, null);
+        try std.testing.expectEqual(@as(u32, @intCast(i)), id.*);
+    }
+
+    // Growth used to invalidate every pointer handed out before it.
+    conn.endpoint(ids[0]).?.incoming_channel = 7;
+    conn.endpoint(ids[63]).?.incoming_channel = 9;
+    try std.testing.expectEqual(@as(?u16, 7), conn.endpoint(ids[0]).?.incoming_channel);
+
+    // Removal used to shift every later endpoint onto its neighbour's data.
+    conn.destroyEndpoint(ids[1]);
+    try std.testing.expect(conn.endpoint(ids[1]) == null);
+    try std.testing.expectEqual(@as(?u16, 7), conn.endpoint(ids[0]).?.incoming_channel);
+    try std.testing.expectEqual(@as(?u16, 9), conn.endpoint(ids[63]).?.incoming_channel);
+    try std.testing.expectEqual(@as(usize, 63), conn.endpoints.items.len);
+
+    conn.destroyEndpoint(ids[1]);
+    try std.testing.expectEqual(@as(usize, 63), conn.endpoints.items.len);
 }
