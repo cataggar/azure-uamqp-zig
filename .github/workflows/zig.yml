@@ -75,8 +75,28 @@ jobs:
       # Pinned because this job is a required check: an unpinned install
       # means an upstream release can block every merge in the repository
       # on a morning nobody changed anything. Bump it deliberately.
+      # Retried because this job gates merges: a blip at PyPI or Docker Hub
+      # should cost a minute, not a red X on a pull request that is fine.
+      # Only the fetches are retried -- a failing test is never retried.
       - name: Install Apache Qpid Proton
-        run: pip install --disable-pip-version-check python-qpid-proton==0.40.0
+        run: |
+          for attempt in 1 2 3; do
+            pip install --disable-pip-version-check python-qpid-proton==0.40.0 && exit 0
+            echo "::warning::pip install failed (attempt $attempt of 3)"
+            sleep $((attempt * 10))
+          done
+          echo "could not install python-qpid-proton" >&2
+          exit 1
+
+      - name: Pull Apache ActiveMQ Artemis
+        run: |
+          for attempt in 1 2 3; do
+            docker pull apache/artemis:2.55.0-alpine && exit 0
+            echo "::warning::docker pull failed (attempt $attempt of 3)"
+            sleep $((attempt * 10))
+          done
+          echo "could not pull the Artemis image" >&2
+          exit 1
 
       - name: Start the Proton broker
         run: |
@@ -96,7 +116,7 @@ jobs:
 
       - name: Start Apache ActiveMQ Artemis
         run: |
-          docker run -d --name artemis -p 5673:5672 \
+          docker run -d --pull never --name artemis -p 5673:5672 \
             -e ARTEMIS_USER=artemis -e ARTEMIS_PASSWORD=artemis \
             apache/artemis:2.55.0-alpine
           # Docker publishes the host port before anything inside is
