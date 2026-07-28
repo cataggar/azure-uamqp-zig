@@ -1,9 +1,9 @@
-///! SASL MSSBCBS mechanism.
-///!
-///! The mechanism Azure Service Bus offers for claims-based security: the
-///! peer names it in its mechanisms list, the client selects it with an empty
-///! initial response, and authorization then happens over the `$cbs` node
-///! (see `cbs.zig`) rather than in the SASL exchange itself.
+//! SASL MSSBCBS mechanism.
+//!
+//! The mechanism Azure Service Bus offers for claims-based security: the
+//! peer names it in its mechanisms list, the client selects it with an empty
+//! initial response, and authorization then happens over the `$cbs` node
+//! (see `cbs.zig`) rather than in the SASL exchange itself.
 const std = @import("std");
 const Mechanism = @import("mechanism.zig").Mechanism;
 

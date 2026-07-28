@@ -1,9 +1,9 @@
-///! Claims-Based Security (CBS) for Azure AMQP
-///!
-///! CBS is the AMQP management protocol pointed at the `$cbs` node: a
-///! `put-token` request carries a credential for an audience, and the service
-///! answers with a status. Everything but the operation names and the status
-///! keys is management's job.
+//! Claims-Based Security (CBS) for Azure AMQP
+//!
+//! CBS is the AMQP management protocol pointed at the `$cbs` node: a
+//! `put-token` request carries a credential for an audience, and the service
+//! answers with a status. Everything but the operation names and the status
+//! keys is management's job.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Session = @import("protocol/session.zig").Session;

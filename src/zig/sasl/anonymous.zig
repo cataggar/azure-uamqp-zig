@@ -1,4 +1,4 @@
-///! SASL ANONYMOUS mechanism (OASIS spec §5.3.3.1)
+//! SASL ANONYMOUS mechanism (OASIS spec §5.3.3.1)
 const std = @import("std");
 const Mechanism = @import("mechanism.zig").Mechanism;
 

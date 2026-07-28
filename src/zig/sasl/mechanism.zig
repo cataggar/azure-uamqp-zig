@@ -1,6 +1,6 @@
-///! SASL Mechanism interface
-///!
-///! Defines the trait (vtable) for SASL authentication mechanisms.
+//! SASL Mechanism interface
+//!
+//! Defines the trait (vtable) for SASL authentication mechanisms.
 const std = @import("std");
 
 /// SASL mechanism interface — implemented by ANONYMOUS, PLAIN, MSSBCBS.

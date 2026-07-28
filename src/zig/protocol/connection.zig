@@ -1,7 +1,7 @@
-///! AMQP 1.0 Connection state machine (OASIS spec §2.4)
-///!
-///! Manages the lifecycle of an AMQP connection: protocol header exchange,
-///! Open/Close performatives, idle timeout, and frame dispatching.
+//! AMQP 1.0 Connection state machine (OASIS spec §2.4)
+//!
+//! Manages the lifecycle of an AMQP connection: protocol header exchange,
+//! Open/Close performatives, idle timeout, and frame dispatching.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const frame_mod = @import("frame.zig");

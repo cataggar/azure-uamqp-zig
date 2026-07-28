@@ -1,19 +1,19 @@
-///! Interop check against a real AMQP 1.0 broker.
-///!
-///! Everything else in this repository is tested against a scripted peer
-///! written from the same reading of the spec as the code it is checking, so
-///! the two can agree and both be wrong. This connects a socket to a broker
-///! nobody here wrote, sends a message and reads it back.
-///!
-///! Configured by environment, so nothing has to be quoted through a build
-///! step:
-///!
-///!   AMQP_HOST      default 127.0.0.1
-///!   AMQP_PORT      default 5672
-///!   AMQP_USER      SASL PLAIN when set, ANONYMOUS when not
-///!   AMQP_PASSWORD  default empty
-///!   AMQP_ADDRESS   default interop-test
-///!   AMQP_TIMEOUT_MS overall deadline, default 30000
+//! Interop check against a real AMQP 1.0 broker.
+//!
+//! Everything else in this repository is tested against a scripted peer
+//! written from the same reading of the spec as the code it is checking, so
+//! the two can agree and both be wrong. This connects a socket to a broker
+//! nobody here wrote, sends a message and reads it back.
+//!
+//! Configured by environment, so nothing has to be quoted through a build
+//! step:
+//!
+//!   AMQP_HOST      default 127.0.0.1
+//!   AMQP_PORT      default 5672
+//!   AMQP_USER      SASL PLAIN when set, ANONYMOUS when not
+//!   AMQP_PASSWORD  default empty
+//!   AMQP_ADDRESS   default interop-test
+//!   AMQP_TIMEOUT_MS overall deadline, default 30000
 const std = @import("std");
 const uamqp = @import("uamqp");
 
