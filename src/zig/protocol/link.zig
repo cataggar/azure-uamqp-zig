@@ -19,6 +19,14 @@ const log = std.log.scoped(.amqp_link);
 /// rather than owned: a pending delivery outlives the call that sent it.
 pub const max_delivery_tag_len = 32;
 
+/// A `max-message-size` of zero means unset, the same as absent (§3.5.3), so
+/// both spellings of "no limit" collapse to null before anything compares
+/// against them.
+fn sizeLimit(field: ?u64) ?u64 {
+    const value = field orelse return null;
+    return if (value == 0) null else value;
+}
+
 /// Link states per AMQP 1.0 §2.6.4
 pub const LinkState = enum {
     detached,
@@ -120,7 +128,13 @@ pub const Link = struct {
     incoming_tag_buf: [max_delivery_tag_len]u8,
     incoming_tag_len: u8,
 
-    // Max message size
+    /// The largest message this endpoint will accept, advertised to the peer
+    /// in our Attach and enforced on both the send and the receive side.
+    ///
+    /// Null — and, per §3.5.3, zero — mean no limit, which leaves the memory a
+    /// single delivery may occupy up to the peer: a sender that never stops
+    /// setting `more` is reassembled until the allocator gives out. Set this
+    /// on any link fed by a peer you do not control.
     max_message_size: ?u64,
     peer_max_message_size: ?u64,
 
@@ -272,10 +286,10 @@ pub const Link = struct {
         if (self.role != .sender) return error.NotASender;
         if (self.state != .attached) return error.InvalidState;
         if (self.link_credit == 0) return error.NoCredit;
-        if (self.max_message_size) |limit| {
+        if (sizeLimit(self.max_message_size)) |limit| {
             if (payload.len > limit) return error.MessageTooLarge;
         }
-        if (self.peer_max_message_size) |limit| {
+        if (sizeLimit(self.peer_max_message_size)) |limit| {
             if (payload.len > limit) return error.MessageTooLarge;
         }
 
@@ -423,7 +437,7 @@ pub const Link = struct {
             // The performative is borrowed; the tag now lives here instead.
             self.incoming_transfer.?.delivery_tag = null;
         }
-        try self.incoming_payload.appendSlice(self.allocator, payload);
+        try self.appendIncoming(payload);
 
         if (transfer.more) return null;
 
@@ -444,6 +458,31 @@ pub const Link = struct {
             }
         }
         return state;
+    }
+
+    /// Accumulate one transfer frame's payload, refusing to grow the
+    /// reassembly buffer past what this endpoint advertised it would accept.
+    ///
+    /// A peer that ignores `max-message-size` is a link error (§2.7.3), and
+    /// the partial message is dropped rather than kept: holding the capacity
+    /// of a delivery that was rejected for being too big is the same leak the
+    /// limit exists to prevent.
+    fn appendIncoming(self: *Link, payload: []const u8) !void {
+        if (sizeLimit(self.max_message_size)) |limit| {
+            const total = @as(u64, self.incoming_payload.items.len) + payload.len;
+            if (total > limit) {
+                self.incoming_payload.clearAndFree(self.allocator);
+                self.incoming_transfer = null;
+                self.detach(true, .{
+                    .condition = "amqp:link:message-size-exceeded",
+                    .description = "message exceeds the advertised max-message-size",
+                }) catch |err| {
+                    log.warn("detach after oversized message failed: {t}", .{err});
+                };
+                return error.MessageSizeExceeded;
+            }
+        }
+        try self.incoming_payload.appendSlice(self.allocator, payload);
     }
 
     /// Handle a received Disposition covering a range of deliveries.
@@ -934,6 +973,72 @@ test "a transfer beyond the credit granted is a link error" {
     }, "unasked for"));
     try testing.expectEqual(@as(?anyerror, error.NoCreditForTransfer), link.takePendingError());
     try testing.expectEqual(LinkState.err, link.state);
+}
+
+test "a message beyond the advertised max-message-size is refused, not buffered" {
+    const allocator = testing.allocator;
+    var fx = try Fixture.init(allocator);
+    defer fx.deinit();
+
+    var link = try Link.init(allocator, &fx.session, "r", .receiver, .{ .address = "q" }, null);
+    defer link.deinit();
+    link.max_message_size = 16;
+    try fx.attach(&link, 4);
+
+    const Handler = struct {
+        var calls: usize = 0;
+        fn onTransfer(_: ?*anyopaque, _: defs.Transfer, _: []const u8) ?defs.DeliveryState {
+            calls += 1;
+            return .accepted;
+        }
+    };
+    Handler.calls = 0;
+    link.on_transfer_received = Handler.onTransfer;
+    link.setLinkCredit(5);
+    fx.peer.clear();
+
+    // Ten bytes at a time: under the limit on its own, over it together.
+    try fx.conn.onBytesReceived(try fx.peer.framePayload(1, .{
+        .transfer = .{ .handle = 4, .delivery_id = 1, .more = true },
+    }, "0123456789"));
+    try testing.expectEqual(@as(usize, 10), link.incoming_payload.items.len);
+
+    try fx.conn.onBytesReceived(try fx.peer.framePayload(1, .{
+        .transfer = .{ .handle = 4, .more = true },
+    }, "0123456789"));
+
+    try testing.expectEqual(@as(?anyerror, error.MessageSizeExceeded), link.takePendingError());
+    try testing.expectEqual(LinkState.err, link.state);
+    try testing.expectEqual(@as(usize, 0), Handler.calls);
+    // The partial message is released, not held: keeping it is the leak the
+    // limit is there to stop.
+    try testing.expectEqual(@as(usize, 0), link.incoming_payload.items.len);
+    try testing.expectEqual(@as(usize, 0), link.incoming_payload.capacity);
+
+    const detach_perf = (try fx.peer.onlyPerformative()).performative.detach;
+    try testing.expect(detach_perf.closed);
+    try testing.expectEqualStrings("amqp:link:message-size-exceeded", detach_perf.err.?.condition);
+}
+
+test "a max-message-size of zero is no limit, not a limit of nothing" {
+    const allocator = testing.allocator;
+    var fx = try Fixture.init(allocator);
+    defer fx.deinit();
+
+    var link = try Link.init(allocator, &fx.session, "s", .sender, null, .{ .address = "q" });
+    defer link.deinit();
+    try fx.attach(&link, 4);
+    try fx.grant(&link, 5);
+    fx.peer.clear();
+
+    // §3.5.3: zero means the field is not set.
+    link.max_message_size = 0;
+    link.peer_max_message_size = 0;
+    _ = try link.send("a message longer than nothing", .{});
+    try testing.expectEqualStrings(
+        "a message longer than nothing",
+        (try fx.peer.onlyPerformative()).payload,
+    );
 }
 
 test "a Disposition settles the deliveries it covers and no others" {
