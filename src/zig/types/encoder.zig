@@ -32,8 +32,27 @@ pub const Buffer = struct {
         return self.data[0..self.pos];
     }
 
+    /// The written bytes, writable — for a caller that has to go back and fill
+    /// in a length it could not know until the rest had been encoded.
+    pub fn mutable(self: *Buffer) []u8 {
+        return self.data[0..self.pos];
+    }
+
     pub fn reset(self: *Buffer) void {
         self.pos = 0;
+    }
+
+    /// Take the written bytes out of the buffer, trimmed to exactly their
+    /// length. The buffer owns nothing afterwards and is safe to `deinit`, so
+    /// a caller can hand the bytes on without the buffer and the new owner
+    /// both believing they hold them.
+    pub fn toOwnedSlice(self: *Buffer) Allocator.Error![]u8 {
+        const a = self.allocator orelse return error.OutOfMemory;
+        if (self.is_fixed) return error.OutOfMemory;
+        const out = try a.realloc(self.data, self.pos);
+        self.data = &.{};
+        self.pos = 0;
+        return out;
     }
 
     fn ensureCapacity(self: *Buffer, additional: usize) !void {
