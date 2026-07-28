@@ -1166,3 +1166,53 @@ test "sends that cannot be represented are refused before anything is written" {
     // A receiver is not a sender, and vice versa.
     try testing.expectError(error.NotAReceiver, link.flow(1, .{}));
 }
+
+test "a receive that runs out of memory leaves nothing behind" {
+    const Case = struct {
+        fn accept(_: ?*anyopaque, _: defs.Transfer, _: []const u8) ?defs.DeliveryState {
+            return .accepted;
+        }
+
+        // Frame handling is driven by callbacks that cannot fail, so an
+        // induced OOM is parked rather than returned. Hand it back, or the
+        // failure looks like the allocator being ignored.
+        fn surface(link: *Link) !void {
+            if (link.takePendingError()) |err| return err;
+        }
+
+        fn receive(allocator: std.mem.Allocator) !void {
+            var fx = try Fixture.init(allocator);
+            defer fx.deinit();
+
+            var link = try Link.init(allocator, &fx.session, "r", .receiver, .{ .address = "q" }, null);
+            defer link.deinit();
+            try fx.attach(&link, 4);
+            link.on_transfer_received = accept;
+            link.setLinkCredit(5);
+
+            try fx.conn.onBytesReceived(try fx.peer.framePayload(1, .{
+                .transfer = .{ .handle = 4, .delivery_id = 1, .delivery_tag = "t", .more = true },
+            }, "hello "));
+            try surface(&link);
+            try fx.conn.onBytesReceived(try fx.peer.framePayload(1, .{
+                .transfer = .{ .handle = 4 },
+            }, "world"));
+            try surface(&link);
+        }
+
+        fn send(allocator: std.mem.Allocator) !void {
+            var fx = try Fixture.init(allocator);
+            defer fx.deinit();
+
+            var link = try Link.init(allocator, &fx.session, "s", .sender, null, .{ .address = "q" });
+            defer link.deinit();
+            try fx.attach(&link, 4);
+            try fx.grant(&link, 5);
+            _ = try link.send("a message worth tracking", .{});
+            try surface(&link);
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Case.receive, .{});
+    try testing.checkAllAllocationFailures(testing.allocator, Case.send, .{});
+}
