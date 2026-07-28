@@ -10,17 +10,26 @@ one fix, one module — so it can be reviewed and reverted on its own.
 
 - **A test that fails without it.** For a bug, write the test that reproduces
   it first; for a feature, cover the behavior a caller would rely on.
-- **`zig fmt`**, or CI will reject it: `zig fmt src examples build.zig`.
+- **`zig fmt`**, or CI will reject it: `zig fmt src examples interop build.zig`.
 - A commit message that says what changed and *why* it was wrong before.
 
 ## Running things
 
 ```sh
-zig build                                        # library + examples
+zig build                                        # library, examples, interop client
 zig build test --summary all                     # the whole suite
 zig build test -Doptimize=ReleaseSafe            # again, with release semantics
 zig test src/zig/uamqp.zig --test-filter "map"   # one test by name substring
-zig fmt --check src examples build.zig
+zig fmt --check src examples interop build.zig
+```
+
+Anything that changes what goes on the wire wants the interop check as well,
+which needs a broker to talk to:
+
+```sh
+pip install python-qpid-proton
+python3 interop/broker.py 127.0.0.1:5672 &
+AMQP_PORT=5672 zig build interop
 ```
 
 A test only runs if its file is reachable from `src/zig/uamqp.zig`, so a new

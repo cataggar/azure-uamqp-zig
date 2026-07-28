@@ -51,4 +51,23 @@ pub fn build(b: *std.Build) void {
         });
         b.installArtifact(exe);
     }
+
+    // Interop check against a real broker. Not part of `test`: it needs a
+    // broker to talk to, which is configured through the environment.
+    const interop_mod = b.createModule(.{
+        .root_source_file = b.path("interop/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    interop_mod.addImport("uamqp", lib_mod);
+    const interop_exe = b.addExecutable(.{
+        .name = "interop",
+        .root_module = interop_mod,
+    });
+    b.installArtifact(interop_exe);
+    const run_interop = b.addRunArtifact(interop_exe);
+    run_interop.step.dependOn(&interop_exe.step);
+    if (b.args) |args| run_interop.addArgs(args);
+    const interop_step = b.step("interop", "Run the interop check against a broker");
+    interop_step.dependOn(&run_interop.step);
 }
