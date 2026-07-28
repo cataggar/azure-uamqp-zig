@@ -69,7 +69,21 @@ try message.addBodyData("hello");
 _ = try sender.send(&message, .{});
 ```
 
-`examples/sender.zig` and `examples/receiver.zig` are built by `zig build`.
+`examples/sender.zig` and `examples/receiver.zig` are complete programs: they
+open a socket, authenticate, attach a link and move a message. Point them at
+any AMQP 1.0 broker.
+
+```sh
+zig build
+python3 interop/broker.py 127.0.0.1:5672 &   # or your own broker
+./zig-out/bin/sender
+./zig-out/bin/receiver
+```
+
+`examples/amqp_client.zig` is the part that is the same either way -- the
+socket, the clock and the loop -- because the library does no I/O and reads no
+clock of its own. CI runs both examples against a real broker, so they cannot
+quietly stop working.
 
 ## What is in it
 

@@ -114,6 +114,18 @@ jobs:
           AMQP_PORT: "5672"
         run: zig build interop
 
+      # The examples are documentation, and documentation that compiles is
+      # not the same as documentation that works. These are the two that
+      # rotted: both claimed to open a connection and neither did.
+      - name: Run the examples against Apache Qpid Proton
+        env:
+          AMQP_PORT: "5672"
+          AMQP_ADDRESS: example-queue
+          AMQP_TIMEOUT_MS: "20000"
+        run: |
+          ./zig-out/bin/sender
+          ./zig-out/bin/receiver
+
       - name: Start Apache ActiveMQ Artemis
         run: |
           docker run -d --pull never --name artemis -p 5673:5672 \
