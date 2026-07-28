@@ -1,14 +1,14 @@
-///! AMQP 1.0 performative types (OASIS spec §2.7)
-///!
-///! Each performative, delivery state and composite is a plain Zig struct.
-///! `described.zig` encodes and decodes them by reflecting over these
-///! declarations, so the field order here is the field order on the wire and a
-///! field without a default is a field the spec marks mandatory. This replaces
-///! the C macro-generated amqp_definitions.c; `codegen/amqp_definitions.xml` is
-///! the reference it is checked against.
-///!
-///! Where AMQP has three types and Zig has one `[]const u8`, the struct says
-///! which with `amqp_symbols`, `amqp_binaries` and `amqp_timestamps`.
+//! AMQP 1.0 performative types (OASIS spec §2.7)
+//!
+//! Each performative, delivery state and composite is a plain Zig struct.
+//! `described.zig` encodes and decodes them by reflecting over these
+//! declarations, so the field order here is the field order on the wire and a
+//! field without a default is a field the spec marks mandatory. This replaces
+//! the C macro-generated amqp_definitions.c; `codegen/amqp_definitions.xml` is
+//! the reference it is checked against.
+//!
+//! Where AMQP has three types and Zig has one `[]const u8`, the struct says
+//! which with `amqp_symbols`, `amqp_binaries` and `amqp_timestamps`.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AmqpValue = @import("../types/amqp_value.zig").AmqpValue;

@@ -1,9 +1,9 @@
-///! AMQP 1.0 Session state machine (OASIS spec §2.5)
-///!
-///! A session is a bidirectional, sequential conversation multiplexed onto one
-///! channel of a connection. It carries the link endpoints, routes incoming
-///! frames to them by handle, and owns the transfer windows that bound how
-///! much either side may send before it is acknowledged.
+//! AMQP 1.0 Session state machine (OASIS spec §2.5)
+//!
+//! A session is a bidirectional, sequential conversation multiplexed onto one
+//! channel of a connection. It carries the link endpoints, routes incoming
+//! frames to them by handle, and owns the transfer windows that bound how
+//! much either side may send before it is acknowledged.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const defs = @import("definitions.zig");

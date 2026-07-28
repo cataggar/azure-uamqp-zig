@@ -1,9 +1,9 @@
-///! AMQP 1.0 Link state machine (OASIS spec §2.6)
-///!
-///! A link is one direction of message flow between two terminuses, running
-///! inside a session. It owns the credit that lets a sender send, the
-///! delivery-count that both ends use to agree on how much has moved, and the
-///! deliveries that are in flight but not yet settled.
+//! AMQP 1.0 Link state machine (OASIS spec §2.6)
+//!
+//! A link is one direction of message flow between two terminuses, running
+//! inside a session. It owns the credit that lets a sender send, the
+//! delivery-count that both ends use to agree on how much has moved, and the
+//! deliveries that are in flight but not yet settled.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const defs = @import("definitions.zig");

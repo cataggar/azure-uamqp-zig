@@ -1,6 +1,6 @@
-///! AMQP 1.0 Messaging helpers (OASIS spec §3.5)
-///!
-///! Utility functions for creating Source and Target instances.
+//! AMQP 1.0 Messaging helpers (OASIS spec §3.5)
+//!
+//! Utility functions for creating Source and Target instances.
 const defs = @import("protocol/definitions.zig");
 const std = @import("std");
 

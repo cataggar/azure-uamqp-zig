@@ -1,28 +1,28 @@
-///! Encoding and decoding of AMQP 1.0 described types (OASIS spec §1.3, §2.7).
-///!
-///! Every performative, every delivery state, and the source/target/error
-///! composites are the same shape on the wire: a descriptor followed by a list
-///! of fields, in declaration order, with trailing null fields omitted. That is
-///! one rule, so it is written once here and driven by `@typeInfo` over the
-///! structs in `definitions.zig` rather than repeated per type.
-///!
-///! What reflection gets right for free:
-///!
-///!   * **Field order** is declaration order, which is spec order.
-///!   * **Mandatory fields** are the ones with no default. That matches the
-///!     spec's `mandatory="true"` exactly, so a missing one is an error and a
-///!     defaulted one is not, without a second list to keep in sync.
-///!   * **Adding a performative** is adding a struct and an `amqp_descriptor`.
-///!
-///! What reflection cannot know, because Zig has one `[]const u8` where AMQP
-///! has three types, is declared per struct:
-///!
-///!   * `amqp_symbols` — fields encoded as symbols rather than strings.
-///!   * `amqp_binaries` — fields encoded as binary.
-///!   * `amqp_timestamps` — `i64` fields encoded as timestamps rather than longs.
-///!
-///! `codegen/amqp_definitions.xml` is the reference these declarations are
-///! checked against.
+//! Encoding and decoding of AMQP 1.0 described types (OASIS spec §1.3, §2.7).
+//!
+//! Every performative, every delivery state, and the source/target/error
+//! composites are the same shape on the wire: a descriptor followed by a list
+//! of fields, in declaration order, with trailing null fields omitted. That is
+//! one rule, so it is written once here and driven by `@typeInfo` over the
+//! structs in `definitions.zig` rather than repeated per type.
+//!
+//! What reflection gets right for free:
+//!
+//!   * **Field order** is declaration order, which is spec order.
+//!   * **Mandatory fields** are the ones with no default. That matches the
+//!     spec's `mandatory="true"` exactly, so a missing one is an error and a
+//!     defaulted one is not, without a second list to keep in sync.
+//!   * **Adding a performative** is adding a struct and an `amqp_descriptor`.
+//!
+//! What reflection cannot know, because Zig has one `[]const u8` where AMQP
+//! has three types, is declared per struct:
+//!
+//!   * `amqp_symbols` — fields encoded as symbols rather than strings.
+//!   * `amqp_binaries` — fields encoded as binary.
+//!   * `amqp_timestamps` — `i64` fields encoded as timestamps rather than longs.
+//!
+//! `codegen/amqp_definitions.xml` is the reference these declarations are
+//! checked against.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

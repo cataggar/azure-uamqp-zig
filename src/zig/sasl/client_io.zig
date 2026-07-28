@@ -1,12 +1,12 @@
-///! SASL client negotiation (OASIS spec §5.3)
-///!
-///! Runs the SASL half of a connection: the SASL protocol header, the
-///! mechanisms the server offers, the chosen mechanism's init and challenge
-///! exchange, and the outcome. Once the outcome is accepted, the bytes that
-///! follow belong to the AMQP connection and are handed on untouched.
-///!
-///! This is the Zig equivalent of saslclientio.c, without the I/O: the caller
-///! owns the transport, as it does for `Connection`.
+//! SASL client negotiation (OASIS spec §5.3)
+//!
+//! Runs the SASL half of a connection: the SASL protocol header, the
+//! mechanisms the server offers, the chosen mechanism's init and challenge
+//! exchange, and the outcome. Once the outcome is accepted, the bytes that
+//! follow belong to the AMQP connection and are handed on untouched.
+//!
+//! This is the Zig equivalent of saslclientio.c, without the I/O: the caller
+//! owns the transport, as it does for `Connection`.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mechanism = @import("mechanism.zig").Mechanism;
