@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+A hardening and performance pass. No API breaks.
+
+### Fixed
+
+- **`Connection.open` failed against any peer that pipelines its AMQP header
+  with the SASL outcome** (#27). The header was answered from inside
+  `onBytesReceived`, so by the time the application called `open` the state
+  had already advanced and it returned `error.InvalidState`. Apache ActiveMQ
+  Artemis pipelines; Apache Qpid Proton does not, which is why this survived
+  until a second broker was added to CI. `open` now means "I want this
+  connection open" and is a no-op once it is being opened.
+- **Unbounded memory on the receive path** (#25). A peer could send transfer
+  fragments forever; `max-message-size` is now enforced while reassembling a
+  delivery, and a link that exceeds it is detached.
+- **A compound's declared `size` was parsed and discarded** (#28). A list, map
+  or array is now sliced to the size it declared and its elements must fill it
+  exactly.
+- Three defects found by running every allocating path against an allocator
+  that fails (#26), including an `ArenaAllocator.reset` whose `false` return
+  was discarded, silently swallowing an out-of-memory.
+- A `max-message-size` of zero is treated as unset on both sides per §3.5.3,
+  rather than as a limit that refuses every message (#25).
+
+### Known limitations
+
+- The decoder rejects a list or array of zero-width elements — five nulls as
+  `e0 02 05 40` — because the element count is bounded by the remaining byte
+  count, and that bound is currently the only thing preventing a small frame
+  from driving a large allocation. Nothing this library encodes hits it.
+
+### Performance
+
+Measured with `zig build bench`, ReleaseFast, allocations counted:
+
+- **Array decode is no longer quadratic** (#29). It rebuilt
+  `constructor ++ remaining-bytes` for every element. 4096 elements: 561 to
+  89 microseconds, 4034 allocations to 2.
+- **A frame is built once instead of three times** (#30). 1 KiB transfer:
+  477 to 415 ns on send, 7 allocations to 1; 461 to 400 ns on receive, 4 to 1.
+
+### Changed
+
+- Connection, session, link, CBS and management state changes log at `debug`
+  rather than `info` (#31). Nothing above `debug` is written on a healthy
+  connection.
+
+### Added
+
+- `zig build interop`, a client that runs the whole stack against a real
+  broker over a real socket (#27). CI runs it against Apache Qpid Proton and
+  Apache ActiveMQ Artemis, and it is a required check.
+- `zig build bench` (#29) and `zig build docs` (#32).
+
 ## 0.2.0
 
 The release that makes the library speak AMQP rather than only encode it, and
