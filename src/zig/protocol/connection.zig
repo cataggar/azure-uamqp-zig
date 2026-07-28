@@ -10,6 +10,8 @@ const FrameCodec = @import("frame_codec.zig").FrameCodec;
 const defs = @import("definitions.zig");
 const described = @import("described.zig");
 const encoder = @import("../types/encoder.zig");
+const TestPeer = @import("test_peer.zig").TestPeer;
+const testing = std.testing;
 
 const log = std.log.scoped(.amqp_connection);
 
@@ -169,15 +171,30 @@ pub const Connection = struct {
     /// array moves when it grows, and removing an endpoint shifts the ones
     /// after it. Look one up with `endpoint` and treat that pointer as valid
     /// only until the next call that adds or removes an endpoint.
+    /// The endpoint is given the lowest unused outgoing channel, which is the
+    /// channel its frames are sent on for the life of the connection (§2.5.1).
     pub fn createEndpoint(self: *Connection, callback: OnEndpointFrameReceived, context: ?*anyopaque) !u32 {
+        const channel = self.nextFreeOutgoingChannel() orelse return error.TooManyChannels;
         const id = self.next_endpoint_id;
         try self.endpoints.append(self.allocator, .{
             .id = id,
             .on_frame_received = callback,
             .context = context,
+            .outgoing_channel = channel,
         });
         self.next_endpoint_id += 1;
         return id;
+    }
+
+    fn nextFreeOutgoingChannel(self: *Connection) ?u16 {
+        var candidate: u16 = 0;
+        while (true) : (candidate += 1) {
+            const taken = for (self.endpoints.items) |ep| {
+                if (ep.outgoing_channel == candidate) break true;
+            } else false;
+            if (!taken) return candidate;
+            if (candidate == self.channel_max) return null;
+        }
     }
 
     /// Look up an endpoint by id. The pointer is valid only until the next
@@ -395,14 +412,28 @@ pub const Connection = struct {
                 return;
             }
         }
-        // A Begin arrives before any endpoint has been told its incoming
-        // channel, so an unclaimed channel goes to an endpoint still waiting
-        // for one.
-        for (self.endpoints.items) |*ep| {
-            if (ep.incoming_channel == null) {
-                ep.incoming_channel = channel;
-                ep.on_frame_received(ep.context, performative, channel, payload);
-                return;
+        // A channel is claimed by the Begin that opens the session on it
+        // (§2.5.1), and by nothing else: a stray frame on an unmapped channel
+        // must not be handed to a session that has not been told it owns one.
+        if (performative == .begin) {
+            // The peer echoes our channel back in `remote-channel`, which says
+            // exactly which of our sessions its channel pairs with.
+            if (performative.begin.remote_channel) |ours| {
+                for (self.endpoints.items) |*ep| {
+                    if (ep.outgoing_channel == ours and ep.incoming_channel == null) {
+                        ep.incoming_channel = channel;
+                        ep.on_frame_received(ep.context, performative, channel, payload);
+                        return;
+                    }
+                }
+            }
+            // The peer began the session, so pair it with one still waiting.
+            for (self.endpoints.items) |*ep| {
+                if (ep.incoming_channel == null) {
+                    ep.incoming_channel = channel;
+                    ep.on_frame_received(ep.context, performative, channel, payload);
+                    return;
+                }
             }
         }
         log.warn("Frame on unmapped channel {d} dropped", .{channel});
@@ -568,75 +599,6 @@ test "endpoints stay addressable as the connection's storage changes" {
     conn.destroyEndpoint(ids[1]);
     try std.testing.expectEqual(@as(usize, 63), conn.endpoints.items.len);
 }
-
-// ── Test peer ──────────────────────────────────────────────────────────
-
-const testing = std.testing;
-
-/// A transport that keeps everything written to it, and can build the frames
-/// a real peer would write back.
-const TestPeer = struct {
-    sent: std.ArrayList(u8) = .empty,
-    scratch: std.ArrayList([]u8) = .empty,
-    allocator: Allocator,
-
-    fn init(allocator: Allocator) TestPeer {
-        return .{ .allocator = allocator };
-    }
-
-    fn deinit(self: *TestPeer) void {
-        for (self.scratch.items) |buf| self.allocator.free(buf);
-        self.scratch.deinit(self.allocator);
-        self.sent.deinit(self.allocator);
-    }
-
-    fn send(context: ?*anyopaque, data: []const u8) anyerror!void {
-        const self: *TestPeer = @ptrCast(@alignCast(context.?));
-        try self.sent.appendSlice(self.allocator, data);
-    }
-
-    fn attach(self: *TestPeer, conn: *Connection) void {
-        conn.setIo(send, self);
-    }
-
-    fn written(self: *TestPeer) []const u8 {
-        return self.sent.items;
-    }
-
-    fn clear(self: *TestPeer) void {
-        self.sent.clearRetainingCapacity();
-    }
-
-    /// The bytes a peer would send for one performative on a channel.
-    fn frame(self: *TestPeer, channel: u16, performative: defs.Performative) ![]const u8 {
-        var body = encoder.Buffer.initDynamic(self.allocator);
-        defer body.deinit();
-        try described.encodePerformative(self.allocator, performative, &body);
-
-        const total = frame_mod.frame_header_size + body.written().len;
-        const buf = try self.allocator.alloc(u8, total);
-        try self.scratch.append(self.allocator, buf);
-
-        const header = FrameHeader{
-            .size = @intCast(total),
-            .doff = 2,
-            .frame_type = .amqp,
-            .channel = channel,
-        };
-        @memcpy(buf[0..frame_mod.frame_header_size], &header.serialize());
-        @memcpy(buf[frame_mod.frame_header_size..], body.written());
-        return buf;
-    }
-
-    /// Decode the one performative the connection sent, skipping its header.
-    fn lastPerformative(self: *TestPeer) !described.Decoded(defs.Performative) {
-        const bytes = self.written();
-        const header = try FrameHeader.parse(bytes[0..8]);
-        return described.decodePerformative(self.allocator, bytes[8..header.size]);
-    }
-};
-
-// ── Tests ──────────────────────────────────────────────────────────────
 
 test "opening exchanges headers and Opens" {
     const allocator = testing.allocator;
