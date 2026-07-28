@@ -42,7 +42,9 @@ pub const management = @import("management.zig");
 pub const message_sender = @import("message_sender.zig");
 pub const message_receiver = @import("message_receiver.zig");
 
-pub const version = "0.2.0";
+/// The package version, read from `build.zig.zon` so there is only ever one
+/// of them to change.
+pub const version = @import("build.zig.zon").version;
 
 test {
     const std = @import("std");

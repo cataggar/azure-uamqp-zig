@@ -11,6 +11,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // So `uamqp.version` can be the version, rather than a second copy of it
+    // that has to be remembered at release time.
+    lib_mod.addAnonymousImport("build.zig.zon", .{
+        .root_source_file = b.path("build.zig.zon"),
+    });
 
     // Static library artifact
     const lib = b.addLibrary(.{
@@ -25,6 +30,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/zig/uamqp.zig"),
         .target = target,
         .optimize = optimize,
+    });
+    test_mod.addAnonymousImport("build.zig.zon", .{
+        .root_source_file = b.path("build.zig.zon"),
     });
     const lib_unit_tests = b.addTest(.{
         .root_module = test_mod,
