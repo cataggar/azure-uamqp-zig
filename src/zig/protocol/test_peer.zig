@@ -95,6 +95,11 @@ pub const TestPeer = struct {
     /// Drive a connection through the header and Open exchange and leave it
     /// opened, with nothing of the handshake left in `written`.
     pub fn openConnection(self: *TestPeer, conn: *Connection) !void {
+        return self.openConnectionAdvertising(conn, null);
+    }
+
+    /// `openConnection`, with the peer advertising an idle timeout of its own.
+    pub fn openConnectionAdvertising(self: *TestPeer, conn: *Connection, idle_time_out: ?u32) !void {
         self.attach(conn);
         try conn.open();
         try conn.onBytesReceived(&frame_mod.amqp_header);
@@ -102,6 +107,7 @@ pub const TestPeer = struct {
             .container_id = "peer",
             .max_frame_size = 65536,
             .channel_max = 16,
+            .idle_time_out = idle_time_out,
         } });
         try conn.onBytesReceived(open_bytes);
         self.clear();
