@@ -99,23 +99,38 @@ pub const Session = struct {
         self.on_state_changed_context = context;
     }
 
-    /// Create a link endpoint within this session.
-    pub fn createLinkEndpoint(self: *Session, name: []const u8) !*LinkEndpoint {
+    /// Create a link endpoint within this session and return its handle.
+    ///
+    /// Endpoints are addressed by handle, never by a stored pointer: the
+    /// backing array moves when it grows, and removing an endpoint shifts the
+    /// ones after it. Look an endpoint up with `linkEndpoint` and treat that
+    /// pointer as valid only until the next call that adds or removes one.
+    pub fn createLinkEndpoint(self: *Session, name: []const u8) !u32 {
         const handle = self.next_handle;
-        self.next_handle += 1;
-
         try self.link_endpoints.append(self.allocator, .{
             .name = name,
             .handle = handle,
         });
-        return &self.link_endpoints.items[self.link_endpoints.items.len - 1];
+        self.next_handle += 1;
+        return handle;
     }
 
-    /// Destroy a link endpoint.
-    pub fn destroyLinkEndpoint(self: *Session, endpoint: *LinkEndpoint) void {
+    /// Look up a link endpoint by handle. The pointer is valid only until the
+    /// next call that adds or removes an endpoint.
+    pub fn linkEndpoint(self: *Session, handle: u32) ?*LinkEndpoint {
+        for (self.link_endpoints.items) |*ep| {
+            if (ep.handle == handle) return ep;
+        }
+        return null;
+    }
+
+    /// Destroy a link endpoint. Does nothing if the handle is unknown, so
+    /// destroying twice is safe.
+    pub fn destroyLinkEndpoint(self: *Session, handle: u32) void {
         for (self.link_endpoints.items, 0..) |*ep, i| {
-            if (ep.handle == endpoint.handle) {
-                _ = self.link_endpoints.orderedRemove(i);
+            if (ep.handle == handle) {
+                // Order carries no meaning — endpoints are found by handle.
+                _ = self.link_endpoints.swapRemove(i);
                 return;
             }
         }
@@ -160,15 +175,13 @@ pub const Session = struct {
 
         // Dispatch to link if handle specified
         if (flow.handle) |handle| {
-            for (self.link_endpoints.items) |*ep| {
-                if (ep.handle == handle) {
-                    if (ep.on_frame_received) |cb| {
-                        cb(ep.context, .{ .flow = flow }, &.{});
-                    }
-                    return;
+            if (self.linkEndpoint(handle)) |ep| {
+                if (ep.on_frame_received) |cb| {
+                    cb(ep.context, .{ .flow = flow }, &.{});
                 }
+            } else {
+                log.warn("Flow for unknown handle: {d}", .{handle});
             }
-            log.warn("Flow for unknown handle: {d}", .{handle});
         }
     }
 
@@ -207,10 +220,111 @@ test "Session create link endpoint" {
     var session = Session.init(allocator, &conn, .{});
     defer session.deinit();
 
-    const ep = try session.createLinkEndpoint("my-link");
-    try std.testing.expectEqual(@as(u32, 0), ep.handle);
-    try std.testing.expectEqualStrings("my-link", ep.name);
+    const h1 = try session.createLinkEndpoint("my-link");
+    const h2 = try session.createLinkEndpoint("my-link-2");
+    try std.testing.expectEqual(@as(u32, 0), h1);
+    try std.testing.expectEqual(@as(u32, 1), h2);
 
-    const ep2 = try session.createLinkEndpoint("my-link-2");
-    try std.testing.expectEqual(@as(u32, 1), ep2.handle);
+    // Read the first endpoint only after the second exists: the old API
+    // returned `&items[len - 1]`, which the append above could have moved.
+    try std.testing.expectEqualStrings("my-link", session.linkEndpoint(h1).?.name);
+    try std.testing.expectEqualStrings("my-link-2", session.linkEndpoint(h2).?.name);
+}
+
+test "link endpoints survive the session's storage growing" {
+    const allocator = std.testing.allocator;
+    var conn = Connection.init(allocator, "test", null, .{});
+    defer conn.deinit();
+
+    var session = Session.init(allocator, &conn, .{});
+    defer session.deinit();
+
+    var names: [64][8]u8 = undefined;
+    var handles: [64]u32 = undefined;
+    for (&names, 0..) |*name, i| {
+        name.* = ("link-" ++ "\x00" ** 3).*;
+        _ = std.fmt.bufPrint(name, "link-{d:0>2}", .{i}) catch unreachable;
+        handles[i] = try session.createLinkEndpoint(name);
+    }
+
+    // Every handle still names its own endpoint, however many reallocations
+    // the appends went through.
+    for (handles, 0..) |handle, i| {
+        const ep = session.linkEndpoint(handle).?;
+        try std.testing.expectEqual(@as(u32, @intCast(i)), ep.handle);
+        try std.testing.expectEqualStrings(&names[i], ep.name);
+    }
+}
+
+test "destroying a link endpoint leaves the others addressable" {
+    const allocator = std.testing.allocator;
+    var conn = Connection.init(allocator, "test", null, .{});
+    defer conn.deinit();
+
+    var session = Session.init(allocator, &conn, .{});
+    defer session.deinit();
+
+    const first = try session.createLinkEndpoint("first");
+    const middle = try session.createLinkEndpoint("middle");
+    const last = try session.createLinkEndpoint("last");
+
+    session.destroyLinkEndpoint(middle);
+
+    // The removal used to shift the array, so `last` named `middle`'s slot.
+    try std.testing.expect(session.linkEndpoint(middle) == null);
+    try std.testing.expectEqualStrings("first", session.linkEndpoint(first).?.name);
+    try std.testing.expectEqualStrings("last", session.linkEndpoint(last).?.name);
+    try std.testing.expectEqual(@as(usize, 2), session.link_endpoints.items.len);
+
+    // Destroying an unknown handle is a no-op, so a double destroy is safe.
+    session.destroyLinkEndpoint(middle);
+    try std.testing.expectEqual(@as(usize, 2), session.link_endpoints.items.len);
+
+    // Handles are never reused, so a stale one cannot address a new endpoint.
+    const fresh = try session.createLinkEndpoint("fresh");
+    try std.testing.expectEqual(@as(u32, 3), fresh);
+    try std.testing.expect(session.linkEndpoint(middle) == null);
+}
+
+test "Flow dispatches to the endpoint named by its handle" {
+    const allocator = std.testing.allocator;
+    var conn = Connection.init(allocator, "test", null, .{});
+    defer conn.deinit();
+
+    var session = Session.init(allocator, &conn, .{});
+    defer session.deinit();
+
+    const Seen = struct {
+        var handle: ?u32 = null;
+        fn onFrame(context: ?*anyopaque, performative: defs.Performative, payload: []const u8) void {
+            _ = payload;
+            _ = context;
+            handle = performative.flow.handle;
+        }
+    };
+    Seen.handle = null;
+
+    _ = try session.createLinkEndpoint("first");
+    const target = try session.createLinkEndpoint("target");
+    _ = try session.createLinkEndpoint("third");
+    session.linkEndpoint(target).?.on_frame_received = Seen.onFrame;
+
+    session.onFlowReceived(.{
+        .incoming_window = 1,
+        .next_outgoing_id = 0,
+        .outgoing_window = 1,
+        .handle = target,
+    });
+    try std.testing.expectEqual(@as(?u32, target), Seen.handle);
+
+    // An unknown handle is dropped, not delivered to whatever sits at that
+    // index.
+    Seen.handle = null;
+    session.onFlowReceived(.{
+        .incoming_window = 1,
+        .next_outgoing_id = 0,
+        .outgoing_window = 1,
+        .handle = 99,
+    });
+    try std.testing.expectEqual(@as(?u32, null), Seen.handle);
 }
