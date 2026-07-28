@@ -573,3 +573,47 @@ test "malformed sections are rejected rather than guessed at" {
     // Bytes that are not a described section at all.
     try testing.expectError(error.NotDescribed, Message.decode(allocator, &.{0x41}));
 }
+
+test "encoding and decoding a message hold nothing when they run out of memory" {
+    const allocator = testing.allocator;
+
+    const Case = struct {
+        fn build(alloc: Allocator) !Message {
+            var msg = Message.init(alloc);
+            errdefer msg.deinit();
+            msg.header = .{ .durable = true, .priority = 7, .ttl = 60_000 };
+            msg.properties = .{ .message_id = .{ .ulong = 42 }, .to = "$cbs", .subject = "put-token" };
+            try msg.setApplicationProperty("operation", "put-token");
+            try msg.putApplicationProperty("status-code", .{ .int = 202 });
+            const anns = try msg.alloc().alloc(MapEntry, 1);
+            anns[0] = .{ .key = .{ .symbol = "x-opt-partition-key" }, .value = .{ .string = "p" } };
+            msg.message_annotations = anns;
+            try msg.addBodyData("first");
+            try msg.addBodyData("second");
+            return msg;
+        }
+
+        fn encodeOnce(alloc: Allocator) !void {
+            var msg = try build(alloc);
+            defer msg.deinit();
+            var buf = Buffer.initDynamic(alloc);
+            defer buf.deinit();
+            try msg.encode(&buf);
+        }
+
+        fn decodeOnce(alloc: Allocator, bytes: []const u8) !void {
+            var msg = try Message.decode(alloc, bytes);
+            msg.deinit();
+        }
+    };
+
+    try testing.checkAllAllocationFailures(allocator, Case.encodeOnce, .{});
+
+    var msg = try Case.build(allocator);
+    defer msg.deinit();
+    var buf = Buffer.initDynamic(allocator);
+    defer buf.deinit();
+    try msg.encode(&buf);
+
+    try testing.checkAllAllocationFailures(allocator, Case.decodeOnce, .{buf.written()});
+}

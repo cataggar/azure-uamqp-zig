@@ -80,6 +80,7 @@ pub const TestPeer = struct {
 
         const total = frame_mod.frame_header_size + body.written().len;
         const buf = try self.allocator.alloc(u8, total);
+        errdefer self.allocator.free(buf);
         try self.scratch.append(self.allocator, buf);
 
         const header = FrameHeader{
@@ -185,13 +186,17 @@ pub const Fixture = struct {
 
     pub fn init(allocator: Allocator) !*Fixture {
         const self = try allocator.create(Fixture);
+        errdefer allocator.destroy(self);
         self.* = .{
             .peer = TestPeer.init(allocator),
             .conn = Connection.init(allocator, "container", null, .{}),
             .allocator = allocator,
         };
+        errdefer self.peer.deinit();
+        errdefer self.conn.deinit();
         try self.peer.openConnection(&self.conn);
         self.session = Session.init(allocator, &self.conn, .{});
+        errdefer self.session.deinit();
         try self.session.begin();
         try self.conn.onBytesReceived(try self.peer.frame(1, .{ .begin = .{
             .remote_channel = 0,

@@ -41,9 +41,13 @@ fn decodeAt(allocator: Allocator, data: []const u8, depth: u8) DecodeError!Decod
     // Described type constructor
     if (code_byte == 0x00) {
         if (data.len < 2) return error.UnexpectedEnd;
-        const desc_result = try decodeAt(allocator, data[1..], depth + 1);
-        const val_result = try decodeAt(allocator, data[1 + desc_result.bytes_consumed ..], depth + 1);
+        var desc_result = try decodeAt(allocator, data[1..], depth + 1);
+        errdefer desc_result.value.deinit(allocator);
+        var val_result = try decodeAt(allocator, data[1 + desc_result.bytes_consumed ..], depth + 1);
+        errdefer val_result.value.deinit(allocator);
+
         const descriptor = try allocator.create(AmqpValue);
+        errdefer allocator.destroy(descriptor);
         descriptor.* = desc_result.value;
         const value = try allocator.create(AmqpValue);
         value.* = val_result.value;
@@ -611,4 +615,26 @@ test "fuzz: decoding arbitrary bytes never crashes" {
             try std.testing.expect(result.bytes_consumed <= data.len);
         }
     }.one, .{});
+}
+
+test "a decode interrupted by allocation failure frees what it built" {
+    // A described value whose body is a list holding a string, a binary, a
+    // map and an array: every compound path that allocates, nested, so a
+    // failure part-way through has something half-built to leak.
+    const bytes = [_]u8{
+        0x00, 0x53, 0x75, // described, descriptor smallulong 117
+        0xc0, 0x1b, 0x04, // list8 of four
+        0xa1, 0x03, 'a',
+        'b',  'c',
+        0xa0, 0x02, 0x01, 0x02, // vbin8
+        0xc1, 0x07, 0x02, 0xa1, 0x01, 'k', 0xa1, 0x01, 'v', // map8
+        0xe0, 0x06, 0x02, 0xa1, 0x01, 'x', 0x01, 'y', // array8 of str8
+    };
+
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn one(allocator: Allocator, data: []const u8) !void {
+            var result = try decode(allocator, data);
+            result.value.deinit(allocator);
+        }
+    }.one, .{&bytes});
 }

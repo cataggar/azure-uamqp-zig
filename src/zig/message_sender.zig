@@ -69,6 +69,8 @@ pub const MessageSender = struct {
     on_state_changed_context: ?*anyopaque = null,
     pending: std.ArrayList(Pending),
     next_send_id: u64,
+    /// Set when a flush driven by a callback failed; see `takePendingError`.
+    pending_error: ?anyerror = null,
 
     /// One send in flight, from the call until it is settled, timed out or
     /// cancelled. Sends stay in order: a queued one is not overtaken.
@@ -193,8 +195,9 @@ pub const MessageSender = struct {
         return send_id;
     }
 
-    /// Expire sends whose timeout has passed. Only needed when `timeout_ms`
-    /// is used; call it from the same loop that drives `Connection.doWork`.
+    /// Expire sends whose timeout has passed, and retry anything still
+    /// queued behind a failed flush. Call it from the same loop that drives
+    /// `Connection.doWork`.
     pub fn doWork(self: *MessageSender) void {
         var i: usize = 0;
         while (i < self.pending.items.len) {
@@ -210,6 +213,21 @@ pub const MessageSender = struct {
             self.releasePending(&expired);
             if (expired.on_complete) |cb| cb(expired.context, .timeout, null);
         }
+
+        // A flush that failed on something transient — an allocator that had
+        // nothing to give, a write that did not go out — leaves the message
+        // queued. Nothing else would ever pick it back up.
+        if (self.state == .open and self.pending.items.len > 0) self.tryFlush();
+    }
+
+    /// The last error a flush failed with, cleared by reading it.
+    ///
+    /// Flushing is driven by callbacks that cannot fail — credit arriving, or
+    /// `doWork` — so the error is parked here instead of returned. The
+    /// message stays queued and is retried; this says why it is still there.
+    pub fn takePendingError(self: *MessageSender) ?anyerror {
+        defer self.pending_error = null;
+        return self.pending_error;
     }
 
     /// How many sends have been accepted but not yet completed.
@@ -256,9 +274,18 @@ pub const MessageSender = struct {
 
     fn onFlowOn(context: ?*anyopaque) void {
         const self: *MessageSender = @ptrCast(@alignCast(context.?));
+        self.tryFlush();
+    }
+
+    /// Flush what is queued, parking anything that goes wrong. No credit and
+    /// no link to send on are ordinary: the message keeps its place.
+    fn tryFlush(self: *MessageSender) void {
         self.flushPending() catch |err| switch (err) {
             error.NoCredit, error.InvalidState => {},
-            else => log.warn("Sending a queued message failed: {s}", .{@errorName(err)}),
+            else => {
+                log.warn("Sending a queued message failed: {s}", .{@errorName(err)});
+                if (self.pending_error == null) self.pending_error = err;
+            },
         };
     }
 
@@ -553,4 +580,116 @@ test "MessageSender refuses a receiver link" {
     var sender = MessageSender.init(allocator, &link);
     defer sender.deinit();
     try testing.expectError(error.NotASender, sender.open());
+}
+
+test "a queued send that runs out of memory leaves nothing behind" {
+    const Case = struct {
+        fn once(allocator: std.mem.Allocator) !void {
+            var fx = try Fixture.init(allocator);
+            defer fx.deinit();
+
+            // Built in place rather than through `openSender`, because a
+            // deferred `deinit` on a link that never got initialised is a
+            // crash rather than the leak report this is looking for.
+            var link = try Link.init(allocator, &fx.session, "sender-1", .sender, .{ .address = "src" }, .{ .address = "dst" });
+            defer link.deinit();
+            try fx.attach(&link, 7);
+
+            var sender = MessageSender.init(allocator, &link);
+            defer sender.deinit();
+            try sender.open();
+
+            var message = try testMessage(allocator, "hello");
+            defer message.deinit();
+
+            // Queued first, so the copy the sender keeps is on the hook too.
+            _ = try sender.send(&message, .{});
+            try fx.grant(&link, 5);
+            if (link.takePendingError()) |err| return err;
+            if (sender.takePendingError()) |err| return err;
+        }
+    };
+
+    try testing.checkAllAllocationFailures(testing.allocator, Case.once, .{});
+}
+
+/// An allocator that can be made to refuse the next request, for testing what
+/// happens to a message queued behind a failure.
+const FlakyAllocator = struct {
+    backing: std.mem.Allocator,
+    fail: bool = false,
+
+    fn allocator(self: *FlakyAllocator) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{
+            .alloc = alloc,
+            .resize = resize,
+            .remap = remap,
+            .free = free,
+        } };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *FlakyAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fail) return null;
+        return self.backing.rawAlloc(len, alignment, ra);
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *FlakyAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fail) return false;
+        return self.backing.rawResize(memory, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *FlakyAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fail) return null;
+        return self.backing.rawRemap(memory, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *FlakyAllocator = @ptrCast(@alignCast(ctx));
+        self.backing.rawFree(memory, alignment, ra);
+    }
+};
+
+test "a message queued behind a failed flush is retried, not stranded" {
+    var flaky = FlakyAllocator{ .backing = testing.allocator };
+    const allocator = flaky.allocator();
+
+    var fx = try Fixture.init(allocator);
+    defer fx.deinit();
+
+    var link = try Link.init(allocator, &fx.session, "sender-1", .sender, .{ .address = "src" }, .{ .address = "dst" });
+    defer link.deinit();
+    try fx.attach(&link, 7);
+
+    var sender = MessageSender.init(allocator, &link);
+    defer sender.deinit();
+    try sender.open();
+
+    var message = try testMessage(allocator, "hello");
+    defer message.deinit();
+
+    // Queued: no credit yet.
+    _ = try sender.send(&message, .{});
+    link.setLinkCredit(5);
+    fx.peer.clear();
+
+    flaky.fail = true;
+    sender.doWork();
+    flaky.fail = false;
+
+    try testing.expectEqual(@as(?anyerror, error.OutOfMemory), sender.takePendingError());
+    try testing.expectEqual(@as(usize, 1), sender.pendingCount());
+    try testing.expectEqual(@as(usize, 0), (try fx.peer.performatives()).len);
+
+    // The next turn of the loop picks it back up.
+    sender.doWork();
+    try testing.expectEqual(@as(?anyerror, null), sender.takePendingError());
+    const sent = try fx.peer.onlyPerformative();
+    try testing.expect(sent.performative == .transfer);
+
+    var decoded = try Message.decode(allocator, sent.payload);
+    defer decoded.deinit();
+    try testing.expectEqualStrings("hello", decoded.body_data_sections.items[0].bytes);
 }
