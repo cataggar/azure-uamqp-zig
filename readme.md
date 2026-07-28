@@ -1,132 +1,107 @@
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+# uamqp
 
-# uAMQP
+An AMQP 1.0 client library for Zig, ported from
+[Azure/azure-uamqp-c](https://github.com/Azure/azure-uamqp-c) v1.2.12.
 
-`uAMQP` is a C library for AMQP 1.0 communication to Azure Cloud Services.
+Everything is Zig — the C sources this began as have been removed. It targets
+Zig 0.16.0.
 
-The goals are:
+## Design
 
-- Compliance with the standard
-- Optimizing for low RAM footprint
-- Be as portable as possible
+The library is **sans-I/O**: it owns no socket, no TLS and no event loop. You
+give it a function that writes bytes, hand it the bytes that arrive, and it
+tells you what to do next through callbacks. That keeps it usable with any
+transport — plain TCP, TLS, WebSockets, a test double — and makes every layer
+testable without a network.
 
-It is currently a client side implementation only.
+For the same reason it does not read a clock: idle timeouts and keep-alives
+run off a `Clock` you supply (`Connection.setClock`), so tests wind time by
+hand instead of sleeping.
 
-## Dependencies
+Memory is explicit: every type that allocates takes an `std.mem.Allocator`,
+and callback arguments never outlive the call — copy what you keep.
 
-`uAMQP` uses `azure-c-shared-utility`, which is a C library providing common functionality for basic tasks (string manipulation, list manipulation, IO, etc.).
-`azure-c-shared-utility` is available here: https://github.com/Azure/azure-c-shared-utility and it is used as a submodule.
+## Using it
 
-Please note that azure-c-shared-utility in turn depends on several libraries (libssl-dev, libuuid-dev, libcurl-dev).
-
-On an Ubuntu distro it is recommended to install all needed packages by running:
-
-```
-  sudo apt-get update
-  sudo apt-get install -y git cmake build-essential curl libcurl4-openssl-dev libssl-dev uuid-dev
-```
-
-azure-c-shared-utility provides several tlsio implementations, some being:
-- tlsio_schannel - runs only on Windows
-- tlsio_openssl - depends on OpenSSL being installed
-- tlsio_wolfssl - depends on WolfSSL being installed
-- tlsio_mbedtls
-- ...
-
-For more information about configuring `azure-c-shared-utility` see https://github.com/Azure/azure-c-shared-utility.
-
-`uAMQP` uses cmake for configuring build files.
-
-For WebSockets support `uAMQP` depends on the support provided by azure-c-shared-utility.
-
-## Setup
-
-### Build
-
-- Clone `azure-uamqp-c` by:
-
-```
-git clone --recursive https://github.com/Azure/azure-uamqp-c.git
+```sh
+zig fetch --save git+https://github.com/cataggar/azure-uamqp-zig
 ```
 
-- Create a folder named `cmake` under `azure-uamqp-c`
-
-- Switch to the `cmake` folder and run
-
-```
-cmake ..
+```zig
+// build.zig
+const uamqp = b.dependency("uamqp", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("uamqp", uamqp.module("uamqp"));
 ```
 
-- Build
+```zig
+const uamqp = @import("uamqp");
 
-```
-cmake --build .
-```
+var connection = uamqp.connection.Connection.init(allocator, "my-container", null, .{});
+defer connection.deinit();
+connection.setIo(writeToYourSocket, socket_context);
+try connection.open();
 
-### Installation and Use
+var session = uamqp.session.Session.init(allocator, &connection, .{});
+defer session.deinit();
+try session.begin();
 
-Optionally, you may choose to install azure-uamqp-c on your machine:
+var link = try uamqp.link.Link.init(
+    allocator,
+    &session,
+    "my-sender",
+    .sender,
+    uamqp.messaging.createSource("my-queue"),
+    uamqp.messaging.createTarget("my-queue"),
+);
+defer link.deinit();
 
-1. Switch to the `cmake` folder and run
-    ```
-    cmake -Duse_installed=ON ../
-    ```
-    ```
-    cmake --build . --target install
-    ```
-    
-    or install using the follow commands for each platform:
+var sender = uamqp.message_sender.MessageSender.init(allocator, &link);
+defer sender.deinit();
+try sender.open(); // attaches the link; open once the peer answers
 
-    On Linux:
-    ```
-    sudo make install
-    ```
+// Whenever the socket has bytes, which is what drives every state machine:
+try connection.onBytesReceived(bytes);
 
-    On Windows:
-    ```
-    msbuild /m INSTALL.vcxproj
-    ```
-
-2. Use it in your project (if installed)
-    ```
-    find_package(uamqp REQUIRED CONFIG)
-    target_link_library(yourlib uamqp)
-    ```
-
-_This requires that azure-c-shared-utility is installed (through CMake) on your machine._
-
-_If running tests, this requires that umock-c, azure-ctest, and azure-c-testrunnerswitcher are installed (through CMake) on your machine._
-
-### Building the tests
-
-In order to build the unit tests use:
-
-```
-cmake .. -Drun_unittests:bool=ON
+// Once the sender is open — `setOnStateChanged` says when:
+var message = uamqp.message.Message.init(allocator);
+defer message.deinit();
+try message.addBodyData("hello");
+_ = try sender.send(&message, .{});
 ```
 
-In order to build the end to end tests use:
+`examples/sender.zig` and `examples/receiver.zig` are built by `zig build`.
 
+## What is in it
+
+| Module | |
+| --- | --- |
+| `types`, `encoder`, `decoder`, `to_string` | the AMQP type system, on and off the wire |
+| `frame`, `frame_codec` | frame headers and the streaming frame parser |
+| `definitions`, `described` | the performatives, encoded by reflection over their structs |
+| `connection`, `session`, `link` | the state machines of AMQP 1.0 §2 |
+| `message`, `messaging` | the message sections of §3 |
+| `message_sender`, `message_receiver` | send and receive, with credit and settlement handled |
+| `sasl.*` | SASL negotiation: PLAIN, ANONYMOUS, MSSBCBS |
+| `cbs`, `management` | the `$cbs` node and the AMQP management protocol |
+
+## Building
+
+```sh
+zig build                    # static library + examples
+zig build test --summary all # the test suite
+zig fmt src examples build.zig
 ```
-cmake .. -Drun_e2e_tests:bool=ON
-```
 
-Please note that some end to end tests (talking to Event Hubs or IoT Hubs) require setup of environment variables so that the tests have the information about the endpoints that they need to connect to.
+CI runs the same steps on Linux, Windows and macOS, plus the suite under
+`-Doptimize=ReleaseSafe`.
 
-## Switching branches
+## Contributing
 
-After any switch of branches (git checkout for example), one should also update the submodule references by:
+See [CONTRIBUTING.md](CONTRIBUTING.md). Every change goes through a pull
+request, and CI must be green before it merges.
 
-```
-git submodule update --init --recursive
-```
+## License
 
-## Samples
-
-Samples are available in the azure-uamqp-c/samples folder:
-
-- Send messages to an Event Hub
-- Receive messages from an Event Hub
-- Send messages to an IoT Hub using CBS
-- Send messages to an IoT Hub using AMQP over WebSockets
-- Simple client/server sample using raw TCP
+MIT — see [LICENSE](LICENSE). The original C library is
+copyright Microsoft Corporation and licensed under the same terms; this port
+keeps that notice.

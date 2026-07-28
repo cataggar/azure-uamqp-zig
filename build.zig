@@ -4,8 +4,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Main library module
-    const lib_mod = b.createModule(.{
+    // Main library module, exported so a dependent package can import it as
+    // `uamqp`. `createModule` kept it private, so nothing downstream could.
+    const lib_mod = b.addModule("uamqp", .{
         .root_source_file = b.path("src/zig/uamqp.zig"),
         .target = target,
         .optimize = optimize,
