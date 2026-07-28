@@ -209,23 +209,50 @@ fn decodeVariable32(allocator: Allocator, data: []const u8, tag: VariableTag) De
     return .{ .value = value, .bytes_consumed = 5 + len };
 }
 
+/// A compound's `size` field counts every byte after itself, so it bounds the
+/// whole body — the count field included. Reading it is what keeps a nested
+/// element from running past its container: without it the only limit on a
+/// malformed element is the end of the entire frame, and a truncated compound
+/// is caught only if the truncation happens to land mid-element.
+///
+/// It also makes the container's declared width authoritative. The sum of what
+/// the elements claimed to consume must agree with it, and if it does not, the
+/// two disagree about where the next value starts — which is corruption, not
+/// something to guess at.
+const Compound = struct {
+    /// Everything after the count field, clipped to the declared size.
+    body: []const u8,
+    count: usize,
+    /// Constructor + size + declared size: what the compound occupies.
+    total: usize,
+};
+
+fn compoundHeader(data: []const u8, comptime wide: bool) DecodeError!Compound {
+    const width: usize = if (wide) 4 else 1;
+    if (data.len < 1 + width * 2) return error.UnexpectedEnd;
+    const size: usize = if (wide) readU32(data[1..5]) else data[1];
+    // The size covers the count field, so it cannot be smaller than one.
+    if (size < width) return error.InvalidData;
+    const total = 1 + width + size;
+    if (data.len < total) return error.UnexpectedEnd;
+    return .{
+        .body = data[1 + width * 2 .. total],
+        .count = if (wide) readU32(data[5..9]) else data[2],
+        .total = total,
+    };
+}
+
 fn decodeList8(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
-    if (data.len < 3) return error.UnexpectedEnd;
-    const size: usize = data[1];
-    const count: usize = data[2];
-    _ = size;
-    return try decodeListItems(allocator, data[3..], count, 3, depth);
+    const head = try compoundHeader(data, false);
+    return try decodeListItems(allocator, head.body, head.count, head.total, depth);
 }
 
 fn decodeList32(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
-    if (data.len < 9) return error.UnexpectedEnd;
-    const size: usize = readU32(data[1..5]);
-    const count: usize = readU32(data[5..9]);
-    _ = size;
-    return try decodeListItems(allocator, data[9..], count, 9, depth);
+    const head = try compoundHeader(data, true);
+    return try decodeListItems(allocator, head.body, head.count, head.total, depth);
 }
 
-fn decodeListItems(allocator: Allocator, data: []const u8, count: usize, header_size: usize, depth: u8) DecodeError!DecodeResult {
+fn decodeListItems(allocator: Allocator, data: []const u8, count: usize, total: usize, depth: u8) DecodeError!DecodeResult {
     // The count comes off the wire. Every element needs at least one byte, so
     // reject a count the remaining data cannot possibly satisfy before
     // allocating for it.
@@ -248,28 +275,25 @@ fn decodeListItems(allocator: Allocator, data: []const u8, count: usize, header_
         filled = i + 1;
         offset += result.bytes_consumed;
     }
-    return .{ .value = .{ .list = items }, .bytes_consumed = header_size + offset };
+    // The elements have to account for exactly the space the header said they
+    // occupy; a shortfall means the two disagree on where the next value begins.
+    if (offset != data.len) return error.InvalidData;
+    return .{ .value = .{ .list = items }, .bytes_consumed = total };
 }
 
 fn decodeMap8(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
-    if (data.len < 3) return error.UnexpectedEnd;
-    const size: usize = data[1];
-    const count: usize = data[2];
-    _ = size;
-    if (count % 2 != 0) return error.InvalidData;
-    return try decodeMapEntries(allocator, data[3..], count / 2, 3, depth);
+    const head = try compoundHeader(data, false);
+    if (head.count % 2 != 0) return error.InvalidData;
+    return try decodeMapEntries(allocator, head.body, head.count / 2, head.total, depth);
 }
 
 fn decodeMap32(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
-    if (data.len < 9) return error.UnexpectedEnd;
-    const size: usize = readU32(data[1..5]);
-    const count: usize = readU32(data[5..9]);
-    _ = size;
-    if (count % 2 != 0) return error.InvalidData;
-    return try decodeMapEntries(allocator, data[9..], count / 2, 9, depth);
+    const head = try compoundHeader(data, true);
+    if (head.count % 2 != 0) return error.InvalidData;
+    return try decodeMapEntries(allocator, head.body, head.count / 2, head.total, depth);
 }
 
-fn decodeMapEntries(allocator: Allocator, data: []const u8, pair_count: usize, header_size: usize, depth: u8) DecodeError!DecodeResult {
+fn decodeMapEntries(allocator: Allocator, data: []const u8, pair_count: usize, total: usize, depth: u8) DecodeError!DecodeResult {
     // Each pair needs at least two bytes, so reject a count the remaining data
     // cannot possibly satisfy before allocating for it.
     if (pair_count > data.len / 2) return error.UnexpectedEnd;
@@ -297,35 +321,33 @@ fn decodeMapEntries(allocator: Allocator, data: []const u8, pair_count: usize, h
         entries[i] = .{ .key = key_value, .value = val_result.value };
         filled = i + 1;
     }
-    return .{ .value = .{ .map = entries }, .bytes_consumed = header_size + offset };
+    if (offset != data.len) return error.InvalidData;
+    return .{ .value = .{ .map = entries }, .bytes_consumed = total };
 }
 
 fn decodeArray8(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
-    if (data.len < 3) return error.UnexpectedEnd;
-    const size: usize = data[1];
-    const count: usize = data[2];
-    _ = size;
-    return try decodeArrayItems(allocator, data[3..], count, 3, depth);
+    const head = try compoundHeader(data, false);
+    return try decodeArrayItems(allocator, head.body, head.count, head.total, depth);
 }
 
 fn decodeArray32(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
-    if (data.len < 9) return error.UnexpectedEnd;
-    const size: usize = readU32(data[1..5]);
-    const count: usize = readU32(data[5..9]);
-    _ = size;
-    return try decodeArrayItems(allocator, data[9..], count, 9, depth);
+    const head = try compoundHeader(data, true);
+    return try decodeArrayItems(allocator, head.body, head.count, head.total, depth);
 }
 
-fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, header_size: usize, depth: u8) DecodeError!DecodeResult {
+fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, total: usize, depth: u8) DecodeError!DecodeResult {
     // First byte is the shared constructor (format code). An array carries one
     // even when it is empty, so it is read — and consumed — either way.
     if (data.len < 1) return error.UnexpectedEnd;
     const constructor_code = data[0];
 
     if (count == 0) {
+        // The constructor is still there and still counted; an empty array is
+        // one byte of body, not zero.
+        if (data.len != 1) return error.InvalidData;
         return .{
             .value = .{ .array = try allocator.alloc(AmqpValue, 0) },
-            .bytes_consumed = header_size + 1,
+            .bytes_consumed = total,
         };
     }
 
@@ -370,7 +392,8 @@ fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, header
             offset += result.bytes_consumed - 1;
         }
     }
-    return .{ .value = .{ .array = items }, .bytes_consumed = header_size + offset };
+    if (offset != data.len) return error.InvalidData;
+    return .{ .value = .{ .array = items }, .bytes_consumed = total };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -637,4 +660,64 @@ test "a decode interrupted by allocation failure frees what it built" {
             result.value.deinit(allocator);
         }
     }.one, .{&bytes});
+}
+
+test "a compound is bounded by its declared size, not by the end of the buffer" {
+    const allocator = std.testing.allocator;
+
+    // A list8 declaring five bytes of body: the count, then a nested list8
+    // that wants five bytes of its own but is only given four. Before the
+    // outer size was honoured the inner list read straight through it and
+    // swallowed the 0x42 that belongs to whatever comes after the outer list.
+    const nested_overrun = [_]u8{
+        0xc0, 0x05, 0x01, // outer list8, five bytes of body, one element
+        0xc0, 0x03, 0x01, 0x41, // inner list8 wanting 0x41 plus one more byte
+        0x42, // outside the outer list entirely
+    };
+    try std.testing.expectError(error.UnexpectedEnd, decode(allocator, &nested_overrun));
+}
+
+test "a compound whose elements do not fill it is rejected" {
+    const allocator = std.testing.allocator;
+
+    // Body is two bytes, but the single element accounts for one of them.
+    // The header and the elements disagree about where the next value starts,
+    // and there is no way to tell which of the two is right.
+    const short = [_]u8{ 0xc0, 0x03, 0x01, 0x41, 0x42 };
+    try std.testing.expectError(error.InvalidData, decode(allocator, &short));
+
+    // Same for a map...
+    const map = [_]u8{ 0xc1, 0x04, 0x02, 0x41, 0x42, 0x43 };
+    try std.testing.expectError(error.InvalidData, decode(allocator, &map));
+
+    // ...and for an array, including the empty one, where the body is exactly
+    // the shared constructor and nothing else.
+    const array = [_]u8{ 0xe0, 0x03, 0x00, 0x40, 0x41 };
+    try std.testing.expectError(error.InvalidData, decode(allocator, &array));
+}
+
+test "a compound truncated mid-element is caught by its own header" {
+    const allocator = std.testing.allocator;
+
+    // Declares nine bytes of body and supplies three.
+    const truncated = [_]u8{ 0xc0, 0x09, 0x02, 0x41, 0x41 };
+    try std.testing.expectError(error.UnexpectedEnd, decode(allocator, &truncated));
+
+    // The size has to cover the count field it precedes.
+    const too_small = [_]u8{ 0xc0, 0x00, 0x00 };
+    try std.testing.expectError(error.InvalidData, decode(allocator, &too_small));
+
+    const too_small_wide = [_]u8{ 0xd0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00 };
+    try std.testing.expectError(error.InvalidData, decode(allocator, &too_small_wide));
+}
+
+test "a compound consumes exactly what it declared" {
+    const allocator = std.testing.allocator;
+
+    // An empty list followed by a byte that is none of its business.
+    const data = [_]u8{ 0xc0, 0x01, 0x00, 0xff };
+    var result = try decode(allocator, &data);
+    defer result.value.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), result.value.list.len);
+    try std.testing.expectEqual(@as(usize, 3), result.bytes_consumed);
 }
