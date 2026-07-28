@@ -40,6 +40,9 @@ pub const OnConnectionStateChanged = *const fn (
     previous_state: ConnectionState,
 ) void;
 
+/// Neither `performative` nor `payload` outlives the call: the performative is
+/// decoded into an arena released once the frame has been handled. Copy
+/// anything worth keeping.
 pub const OnEndpointFrameReceived = *const fn (
     context: ?*anyopaque,
     performative: defs.Performative,
