@@ -456,7 +456,7 @@ pub const Session = struct {
         if (self.state == new_state) return;
         const prev = self.state;
         self.state = new_state;
-        log.info("Session state: {s} -> {s}", .{ @tagName(prev), @tagName(new_state) });
+        log.debug("Session state: {s} -> {s}", .{ @tagName(prev), @tagName(new_state) });
         if (self.on_state_changed) |cb| {
             cb(self.on_state_changed_context, new_state, prev);
         }

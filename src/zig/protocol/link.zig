@@ -607,7 +607,7 @@ pub const Link = struct {
         if (self.state == new_state) return;
         const prev = self.state;
         self.state = new_state;
-        log.info("Link '{s}' state: {s} -> {s}", .{ self.name, @tagName(prev), @tagName(new_state) });
+        log.debug("Link '{s}' state: {s} -> {s}", .{ self.name, @tagName(prev), @tagName(new_state) });
         if (self.on_state_changed) |cb| {
             cb(self.on_state_changed_context, new_state, prev);
         }
