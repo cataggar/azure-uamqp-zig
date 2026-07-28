@@ -51,4 +51,6 @@ test {
     // inside the `sasl` namespace were never analyzed and their tests never
     // ran. Any further namespace needs the same treatment.
     std.testing.refAllDecls(sasl);
+    // Not exported: hostile-input tests are not part of the API.
+    _ = @import("fuzz.zig");
 }
