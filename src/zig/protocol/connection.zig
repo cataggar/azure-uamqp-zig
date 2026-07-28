@@ -11,6 +11,7 @@ const defs = @import("definitions.zig");
 const described = @import("described.zig");
 const encoder = @import("../types/encoder.zig");
 const TestPeer = @import("test_peer.zig").TestPeer;
+const ManualClock = @import("test_peer.zig").ManualClock;
 const testing = std.testing;
 
 const log = std.log.scoped(.amqp_connection);
@@ -548,7 +549,9 @@ pub const Connection = struct {
         try self.sendBytes(buf);
     }
 
-    fn nowMs(self: *Connection) i64 {
+    /// The current time, or the last time a frame arrived when no clock has
+    /// been supplied. Public so the layers above can share one clock.
+    pub fn nowMs(self: *Connection) i64 {
         const clock = self.clock orelse return self.last_frame_received_ms;
         return clock.nowMs();
     }
@@ -979,25 +982,6 @@ test "sending before the connection is open is refused" {
     // Close is not a thing that can happen from `start`.
     try testing.expectError(error.InvalidState, conn.close(null, null));
 }
-
-/// A clock the test winds by hand, so idle timeouts are exercised in
-/// microseconds rather than minutes.
-const ManualClock = struct {
-    ms: i64 = 0,
-
-    fn read(context: ?*anyopaque) i64 {
-        const self: *ManualClock = @ptrCast(@alignCast(context.?));
-        return self.ms;
-    }
-
-    fn clock(self: *ManualClock) Clock {
-        return .{ .context = self, .read_ms = read };
-    }
-
-    fn advance(self: *ManualClock, by: i64) void {
-        self.ms += by;
-    }
-};
 
 /// The 8 bytes of an empty frame: a header claiming a body that is not there.
 fn isHeartbeat(bytes: []const u8) bool {

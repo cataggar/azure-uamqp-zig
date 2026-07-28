@@ -38,6 +38,8 @@ pub const sasl = struct {
 // High-level
 pub const cbs = @import("cbs.zig");
 pub const management = @import("management.zig");
+pub const message_sender = @import("message_sender.zig");
+pub const message_receiver = @import("message_receiver.zig");
 
 pub const version = "0.1.0";
 
