@@ -1,7 +1,7 @@
 .{
     .name = .uamqp,
     .fingerprint = 0x52a4693c691c7395,
-    .version = "0.1.0",
+    .version = "0.2.0",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .paths = .{

@@ -42,7 +42,7 @@ pub const management = @import("management.zig");
 pub const message_sender = @import("message_sender.zig");
 pub const message_receiver = @import("message_receiver.zig");
 
-pub const version = "0.1.0";
+pub const version = "0.2.0";
 
 test {
     const std = @import("std");

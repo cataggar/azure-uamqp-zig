@@ -95,6 +95,10 @@ zig fmt src examples build.zig
 CI runs the same steps on Linux, Windows and macOS, plus the suite under
 `-Doptimize=ReleaseSafe`.
 
+## Changes
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Every change goes through a pull
