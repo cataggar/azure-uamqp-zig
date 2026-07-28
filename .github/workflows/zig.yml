@@ -87,13 +87,16 @@ jobs:
       - name: Start Apache ActiveMQ Artemis
         run: |
           docker run -d --name artemis -p 5673:5672 \
-            -e AMQ_USER=artemis -e AMQ_PASSWORD=artemis \
-            apache/activemq-artemis:latest-alpine
+            -e ARTEMIS_USER=artemis -e ARTEMIS_PASSWORD=artemis \
+            apache/artemis:2.55.0-alpine
+          # Docker publishes the host port before anything inside is
+          # listening, so a TCP connect proves nothing -- it succeeds and
+          # then the proxy resets us. Wait for the broker to say so itself.
           for _ in $(seq 1 90); do
-            (exec 3<>/dev/tcp/127.0.0.1/5673) 2>/dev/null && exit 0
+            if docker logs artemis 2>&1 | grep -q AMQ221007; then exit 0; fi
             sleep 2
           done
-          echo "Artemis never came up" >&2
+          echo "Artemis never became active" >&2
           docker logs artemis >&2
           exit 1
 
