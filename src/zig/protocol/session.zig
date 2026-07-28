@@ -31,6 +31,9 @@ pub const OnSessionStateChanged = *const fn (
 
 pub const OnSessionFlowOn = *const fn (context: ?*anyopaque) void;
 
+/// Neither `performative` nor `payload` outlives the call: the performative is
+/// decoded into an arena released once the frame has been handled. Copy
+/// anything worth keeping.
 pub const OnLinkFrameReceived = *const fn (
     context: ?*anyopaque,
     performative: defs.Performative,
