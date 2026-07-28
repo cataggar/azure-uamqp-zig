@@ -115,6 +115,30 @@ PLAIN when set, ANONYMOUS when not), `AMQP_PASSWORD`, `AMQP_ADDRESS` and
 `AMQP_TIMEOUT_MS`. Point it at anything that speaks AMQP 1.0. CI runs it
 against Apache Qpid Proton and Apache ActiveMQ Artemis.
 
+### Benchmarks
+
+```sh
+zig build bench
+```
+
+Always built ReleaseFast, whatever `-Doptimize` says: a debug build measures
+the allocator and the safety checks rather than the codec, which is worse than
+no number at all because it looks like one. It reports allocations per
+operation alongside the timings, which is the number that stays meaningful on
+a noisy machine.
+
+### Logging
+
+Nothing is logged above `debug` on a healthy connection. State changes and a
+successful SASL exchange are `debug`; `warn` is reserved for something that
+went wrong. Credentials are never logged.
+
+To see the protocol as it happens:
+
+```zig
+pub const std_options: std.Options = .{ .log_level = .debug };
+```
+
 ## Changes
 
 See [CHANGELOG.md](CHANGELOG.md).

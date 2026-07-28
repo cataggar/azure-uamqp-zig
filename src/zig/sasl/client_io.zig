@@ -164,7 +164,7 @@ pub const SaslClientIo = struct {
     pub fn onOutcomeReceived(self: *SaslClientIo, outcome: defs.SaslOutcome) void {
         if (outcome.code == .ok) {
             self.state = .complete;
-            log.info("SASL authentication successful", .{});
+            log.debug("SASL authentication successful", .{});
             if (self.on_open_complete) |cb| {
                 cb(self.on_open_complete_context, true);
             }
