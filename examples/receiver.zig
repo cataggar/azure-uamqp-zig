@@ -4,7 +4,7 @@
 const std = @import("std");
 const uamqp = @import("uamqp");
 
-pub fn main() void {
+pub fn main() !void {
     std.debug.print("uAMQP Zig Receiver Example (v{s})\n", .{uamqp.version});
 
     // Demonstrate AMQP value types
@@ -22,7 +22,7 @@ pub fn main() void {
 
     // Demonstrate value encoding size
     for (values) |v| {
-        const size = uamqp.encoder.encodedSize(v);
+        const size = try uamqp.encoder.encodedSize(v);
         std.debug.print("  {s} encodes to {d} bytes\n", .{ v.typeName(), size });
     }
 
