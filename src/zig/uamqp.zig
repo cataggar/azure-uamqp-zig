@@ -43,4 +43,8 @@ pub const version = "0.1.0";
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
+    // `refAllDecls` stops at this file's own declarations, so the modules
+    // inside the `sasl` namespace were never analyzed and their tests never
+    // ran. Any further namespace needs the same treatment.
+    std.testing.refAllDecls(sasl);
 }
