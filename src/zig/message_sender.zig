@@ -162,14 +162,25 @@ pub const MessageSender = struct {
         var buf = encoder.Buffer.initDynamic(self.allocator);
         defer buf.deinit();
         try message.encode(&buf);
-        return self.sendBytes(buf.written(), opts);
+        // The encoded bytes are already ours, so hand the queue the buffer
+        // itself rather than a copy of it.
+        return self.enqueue(try buf.toOwnedSlice(), opts);
     }
 
     /// Send an already-encoded message body.
+    ///
+    /// The payload is copied: a message with no credit waits in the queue, and
+    /// the caller is free to reuse or free its buffer as soon as this returns.
     pub fn sendBytes(self: *MessageSender, payload: []const u8, opts: SendOptions) !u64 {
         if (self.state != .open) return error.InvalidState;
 
         const owned = try self.allocator.dupe(u8, payload);
+        errdefer self.allocator.free(owned);
+        return self.enqueue(owned, opts);
+    }
+
+    /// Queue a payload the sender now owns, and try to flush.
+    fn enqueue(self: *MessageSender, owned: []u8, opts: SendOptions) !u64 {
         errdefer self.allocator.free(owned);
 
         const tag: ?[]u8 = if (opts.delivery_tag) |t| try self.allocator.dupe(u8, t) else null;

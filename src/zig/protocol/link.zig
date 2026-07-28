@@ -128,6 +128,11 @@ pub const Link = struct {
     incoming_tag_buf: [max_delivery_tag_len]u8,
     incoming_tag_len: u8,
 
+    /// Scratch for `payloadBudget`, which encodes a Transfer performative just
+    /// to find out how wide it is. Kept on the link so that measuring a frame
+    /// does not allocate.
+    measure_buf: encoder.Buffer,
+
     /// The largest message this endpoint will accept, advertised to the peer
     /// in our Attach and enforced on both the send and the receive side.
     ///
@@ -190,6 +195,7 @@ pub const Link = struct {
             .incoming_transfer = null,
             .incoming_tag_buf = undefined,
             .incoming_tag_len = 0,
+            .measure_buf = encoder.Buffer.initDynamic(allocator),
             .max_message_size = null,
             .peer_max_message_size = null,
             .subscribed = false,
@@ -208,6 +214,7 @@ pub const Link = struct {
         if (self.peer_target_address) |a| self.allocator.free(a);
         self.incoming_payload.deinit(self.allocator);
         self.pending_deliveries.deinit(self.allocator);
+        self.measure_buf.deinit();
         self.session.destroyLinkEndpoint(self.handle);
     }
 
@@ -586,12 +593,16 @@ pub const Link = struct {
     }
 
     /// How much payload fits behind this performative in one frame.
+    ///
+    /// The performative has to be encoded to be measured -- its width depends
+    /// on which fields are set and how large they are -- and this runs once
+    /// per frame of every delivery, so it measures into a buffer the link
+    /// keeps rather than allocating and freeing one each time.
     fn payloadBudget(self: *Link, transfer: defs.Transfer) !usize {
-        var buf = encoder.Buffer.initDynamic(self.allocator);
-        defer buf.deinit();
-        try described.encodePerformative(self.allocator, .{ .transfer = transfer }, &buf);
+        self.measure_buf.reset();
+        try described.encodePerformative(self.allocator, .{ .transfer = transfer }, &self.measure_buf);
 
-        const overhead = frame_mod.frame_header_size + buf.written().len;
+        const overhead = frame_mod.frame_header_size + self.measure_buf.written().len;
         const max_frame = self.session.connection.remote_max_frame_size;
         if (overhead >= max_frame) return error.FrameTooSmallForTransfer;
         return max_frame - overhead;

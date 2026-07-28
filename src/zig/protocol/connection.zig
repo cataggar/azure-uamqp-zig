@@ -116,6 +116,17 @@ pub const Connection = struct {
     /// `onBytesReceived`.
     pending_error: ?anyerror,
 
+    /// One buffer for every frame this connection sends. Each frame is built
+    /// into it in place -- header, performative, payload -- so the payload is
+    /// copied once rather than twice, and a steady stream of frames stops
+    /// allocating once it has grown to the largest frame seen.
+    send_buf: encoder.Buffer,
+
+    /// Scratch for building the value tree a performative is encoded from.
+    /// Reset rather than torn down between frames, so the tree for a steady
+    /// stream of frames is built in memory that has already been claimed.
+    send_arena: std.heap.ArenaAllocator,
+
     // Timing. Null until `setClock`; without it there is nothing to compare
     // an idle timeout against.
     clock: ?Clock,
@@ -166,12 +177,16 @@ pub const Connection = struct {
             .on_state_changed_context = null,
             .io_send = null,
             .io_context = null,
+            .send_buf = encoder.Buffer.initDynamic(allocator),
+            .send_arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
 
     pub fn deinit(self: *Connection) void {
         self.frame_codec.deinit();
         self.endpoints.deinit(self.allocator);
+        self.send_buf.deinit();
+        self.send_arena.deinit();
     }
 
     /// Set the I/O send callback.
@@ -314,13 +329,7 @@ pub const Connection = struct {
         payload: []const u8,
     ) !void {
         if (channel > self.remote_channel_max) return error.ChannelOutOfRange;
-
-        var body = encoder.Buffer.initDynamic(self.allocator);
-        defer body.deinit();
-        try described.encodePerformative(self.allocator, performative, &body);
-        try body.writeAll(payload);
-
-        try self.sendFrame(.amqp, channel, body.written());
+        try self.sendFrame(.amqp, channel, performative, payload);
     }
 
     /// Process incoming bytes from the transport.
@@ -552,12 +561,29 @@ pub const Connection = struct {
 
     /// Frame a body and hand it to the transport, respecting the frame size
     /// the peer asked for in its Open.
-    fn sendFrame(self: *Connection, frame_type: frame_mod.FrameType, channel: u16, body: []const u8) !void {
-        const total = frame_mod.frame_header_size + body.len;
-        if (total > self.remote_max_frame_size) return error.FrameTooLarge;
+    /// Build one frame in the connection's send buffer and hand it to the
+    /// transport. The header's size field is only known once the performative
+    /// and payload have been written, so room for it is left at the front and
+    /// filled in at the end rather than assembling the frame twice.
+    fn sendFrame(
+        self: *Connection,
+        frame_type: frame_mod.FrameType,
+        channel: u16,
+        performative: defs.Performative,
+        payload: []const u8,
+    ) !void {
+        self.send_buf.reset();
+        try self.send_buf.writeAll(&[_]u8{0} ** frame_mod.frame_header_size);
+        // Retaining the capacity means reclaiming it in one block, which can
+        // itself fail. Reporting that as the allocation failure it is beats
+        // carrying on quietly: `checkAllAllocationFailures` catches exactly
+        // this, and a caller that retries has somewhere to retry from.
+        if (!self.send_arena.reset(.retain_capacity)) return error.OutOfMemory;
+        try described.encodePerformative(self.send_arena.allocator(), performative, &self.send_buf);
+        try self.send_buf.writeAll(payload);
 
-        const buf = try self.allocator.alloc(u8, total);
-        defer self.allocator.free(buf);
+        const total = self.send_buf.written().len;
+        if (total > self.remote_max_frame_size) return error.FrameTooLarge;
 
         const header = FrameHeader{
             .size = @intCast(total),
@@ -565,9 +591,8 @@ pub const Connection = struct {
             .frame_type = frame_type,
             .channel = channel,
         };
-        @memcpy(buf[0..frame_mod.frame_header_size], &header.serialize());
-        @memcpy(buf[frame_mod.frame_header_size..], body);
-        try self.sendBytes(buf);
+        @memcpy(self.send_buf.mutable()[0..frame_mod.frame_header_size], &header.serialize());
+        try self.sendBytes(self.send_buf.written());
     }
 
     /// The current time, or the last time a frame arrived when no clock has
@@ -1240,4 +1265,79 @@ test "a connection with no idle timeouts at either end needs no clock" {
 
     try conn.doWork();
     try testing.expectEqual(@as(usize, 0), peer.written().len);
+}
+
+/// Counts allocations without changing behaviour, so a test can assert on how
+/// often the send path reaches for memory rather than on how long it takes.
+const CountingAllocator = struct {
+    parent: Allocator,
+    count: usize = 0,
+
+    fn alloc(ctx: *anyopaque, len: usize, a: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        self.count += 1;
+        return self.parent.rawAlloc(len, a, ra);
+    }
+    fn resize(ctx: *anyopaque, buf: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        return self.parent.rawResize(buf, a, new_len, ra);
+    }
+    fn remap(ctx: *anyopaque, buf: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        self.count += 1;
+        return self.parent.rawRemap(buf, a, new_len, ra);
+    }
+    fn free(ctx: *anyopaque, buf: []u8, a: std.mem.Alignment, ra: usize) void {
+        const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+        self.parent.rawFree(buf, a, ra);
+    }
+    fn allocator(self: *CountingAllocator) Allocator {
+        return .{ .ptr = self, .vtable = &.{
+            .alloc = alloc,
+            .resize = resize,
+            .remap = remap,
+            .free = free,
+        } };
+    }
+};
+
+test "sending frames of the same size stops allocating" {
+    var counting = CountingAllocator{ .parent = testing.allocator };
+    const allocator = counting.allocator();
+
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var conn = Connection.init(allocator, "c", null, .{});
+    defer conn.deinit();
+    peer.attach(&conn);
+    try conn.open();
+    try conn.onBytesReceived(&frame_mod.amqp_header);
+    try conn.onBytesReceived(try peer.frame(0, .{ .open = .{
+        .container_id = "peer",
+        .max_frame_size = 65536,
+    } }));
+
+    // The buffer grows to fit the first few frames; what matters is that it
+    // stops growing rather than that it never grew.
+    for (0..8) |_| {
+        peer.clear();
+        try conn.sendPerformative(0, .{ .flow = .{
+            .incoming_window = 1,
+            .next_outgoing_id = 0,
+            .outgoing_window = 1,
+        } }, "0123456789" ** 8);
+    }
+
+    const settled = counting.count;
+    for (0..64) |_| {
+        peer.clear();
+        try conn.sendPerformative(0, .{ .flow = .{
+            .incoming_window = 1,
+            .next_outgoing_id = 0,
+            .outgoing_window = 1,
+        } }, "0123456789" ** 8);
+    }
+    // Sixty-four frames, no allocation: the send buffer is reused, and the
+    // frame is built in it rather than assembled out of two throwaway buffers.
+    try testing.expectEqual(settled, counting.count);
 }
