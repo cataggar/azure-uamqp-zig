@@ -274,3 +274,45 @@ test "FrameCodec encodeFrame" {
     try std.testing.expectEqual(@as(u16, 3), hdr.channel);
     try std.testing.expectEqualStrings(body, encoded[8..]);
 }
+
+test "fuzz: receiving arbitrary bytes never crashes" {
+    const Checker = struct {
+        max_frame_size: u32,
+        violation: bool = false,
+
+        fn onFrame(context: ?*anyopaque, header: FrameHeader, body: []const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(context.?));
+            // A dispatched frame must be self-consistent: within the negotiated
+            // maximum, and carrying exactly the bytes the header accounts for.
+            if (header.size > self.max_frame_size) self.violation = true;
+            if (header.size < frame.frame_header_size) self.violation = true;
+            if (body.len != header.size - @as(u32, header.doff) * 4) self.violation = true;
+        }
+    };
+
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const data = buf[0..len];
+
+            // The same bytes must parse the same way however the transport
+            // happens to split them across reads.
+            for ([_]usize{ 1, 3, 8, 64, 4096 }) |chunk| {
+                var checker = Checker{ .max_frame_size = 1024 };
+                var codec = FrameCodec.init(std.testing.allocator, checker.max_frame_size);
+                defer codec.deinit();
+                try codec.subscribe(.amqp, Checker.onFrame, &checker);
+                try codec.subscribe(.sasl, Checker.onFrame, &checker);
+
+                var offset: usize = 0;
+                while (offset < data.len) {
+                    const end = @min(offset + chunk, data.len);
+                    codec.receiveBytes(data[offset..end]) catch break;
+                    offset = end;
+                }
+                try std.testing.expect(!checker.violation);
+            }
+        }
+    }.one, .{});
+}

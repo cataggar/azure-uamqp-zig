@@ -10,14 +10,30 @@ pub const DecodeError = error{
     InvalidFormatCode,
     InvalidData,
     UnexpectedEnd,
+    /// The value nests deeper than `max_nesting_depth`.
+    NestingTooDeep,
     OutOfMemory,
 };
+
+/// How deeply a value may nest before it is refused.
+///
+/// Decoding is recursive, and nesting is entirely under the peer's control:
+/// a described type inside a described type inside a list costs a stack
+/// frame each time, and 200 KB of `0x00` bytes — well inside any ordinary
+/// max-frame-size — is enough to run the stack out and abort the process.
+/// Real AMQP values nest a handful deep; this leaves a wide margin.
+pub const max_nesting_depth: u8 = 64;
 
 pub const DecodeResult = struct { value: AmqpValue, bytes_consumed: usize };
 
 /// Decode a single AMQP 1.0 value from binary data.
 /// Returns the decoded value and the number of bytes consumed.
 pub fn decode(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
+    return decodeAt(allocator, data, 0);
+}
+
+fn decodeAt(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
+    if (depth > max_nesting_depth) return error.NestingTooDeep;
     if (data.len == 0) return error.UnexpectedEnd;
 
     const code_byte = data[0];
@@ -25,8 +41,8 @@ pub fn decode(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
     // Described type constructor
     if (code_byte == 0x00) {
         if (data.len < 2) return error.UnexpectedEnd;
-        const desc_result = try decode(allocator, data[1..]);
-        const val_result = try decode(allocator, data[1 + desc_result.bytes_consumed ..]);
+        const desc_result = try decodeAt(allocator, data[1..], depth + 1);
+        const val_result = try decodeAt(allocator, data[1 + desc_result.bytes_consumed ..], depth + 1);
         const descriptor = try allocator.create(AmqpValue);
         descriptor.* = desc_result.value;
         const value = try allocator.create(AmqpValue);
@@ -146,16 +162,16 @@ pub fn decode(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
         .symbol_32 => try decodeVariable32(allocator, data, .symbol),
 
         // Compound: list
-        .list_8 => try decodeList8(allocator, data),
-        .list_32 => try decodeList32(allocator, data),
+        .list_8 => try decodeList8(allocator, data, depth),
+        .list_32 => try decodeList32(allocator, data, depth),
 
         // Compound: map
-        .map_8 => try decodeMap8(allocator, data),
-        .map_32 => try decodeMap32(allocator, data),
+        .map_8 => try decodeMap8(allocator, data, depth),
+        .map_32 => try decodeMap32(allocator, data, depth),
 
         // Array
-        .array_8 => try decodeArray8(allocator, data),
-        .array_32 => try decodeArray32(allocator, data),
+        .array_8 => try decodeArray8(allocator, data, depth),
+        .array_32 => try decodeArray32(allocator, data, depth),
 
         _ => error.InvalidFormatCode,
     };
@@ -189,23 +205,23 @@ fn decodeVariable32(allocator: Allocator, data: []const u8, tag: VariableTag) De
     return .{ .value = value, .bytes_consumed = 5 + len };
 }
 
-fn decodeList8(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
+fn decodeList8(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
     if (data.len < 3) return error.UnexpectedEnd;
     const size: usize = data[1];
     const count: usize = data[2];
     _ = size;
-    return try decodeListItems(allocator, data[3..], count, 3);
+    return try decodeListItems(allocator, data[3..], count, 3, depth);
 }
 
-fn decodeList32(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
+fn decodeList32(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
     if (data.len < 9) return error.UnexpectedEnd;
     const size: usize = readU32(data[1..5]);
     const count: usize = readU32(data[5..9]);
     _ = size;
-    return try decodeListItems(allocator, data[9..], count, 9);
+    return try decodeListItems(allocator, data[9..], count, 9, depth);
 }
 
-fn decodeListItems(allocator: Allocator, data: []const u8, count: usize, header_size: usize) DecodeError!DecodeResult {
+fn decodeListItems(allocator: Allocator, data: []const u8, count: usize, header_size: usize, depth: u8) DecodeError!DecodeResult {
     // The count comes off the wire. Every element needs at least one byte, so
     // reject a count the remaining data cannot possibly satisfy before
     // allocating for it.
@@ -223,7 +239,7 @@ fn decodeListItems(allocator: Allocator, data: []const u8, count: usize, header_
     }
     var offset: usize = 0;
     for (0..count) |i| {
-        const result = try decode(allocator, data[offset..]);
+        const result = try decodeAt(allocator, data[offset..], depth + 1);
         items[i] = result.value;
         filled = i + 1;
         offset += result.bytes_consumed;
@@ -231,25 +247,25 @@ fn decodeListItems(allocator: Allocator, data: []const u8, count: usize, header_
     return .{ .value = .{ .list = items }, .bytes_consumed = header_size + offset };
 }
 
-fn decodeMap8(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
+fn decodeMap8(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
     if (data.len < 3) return error.UnexpectedEnd;
     const size: usize = data[1];
     const count: usize = data[2];
     _ = size;
     if (count % 2 != 0) return error.InvalidData;
-    return try decodeMapEntries(allocator, data[3..], count / 2, 3);
+    return try decodeMapEntries(allocator, data[3..], count / 2, 3, depth);
 }
 
-fn decodeMap32(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
+fn decodeMap32(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
     if (data.len < 9) return error.UnexpectedEnd;
     const size: usize = readU32(data[1..5]);
     const count: usize = readU32(data[5..9]);
     _ = size;
     if (count % 2 != 0) return error.InvalidData;
-    return try decodeMapEntries(allocator, data[9..], count / 2, 9);
+    return try decodeMapEntries(allocator, data[9..], count / 2, 9, depth);
 }
 
-fn decodeMapEntries(allocator: Allocator, data: []const u8, pair_count: usize, header_size: usize) DecodeError!DecodeResult {
+fn decodeMapEntries(allocator: Allocator, data: []const u8, pair_count: usize, header_size: usize, depth: u8) DecodeError!DecodeResult {
     // Each pair needs at least two bytes, so reject a count the remaining data
     // cannot possibly satisfy before allocating for it.
     if (pair_count > data.len / 2) return error.UnexpectedEnd;
@@ -267,12 +283,12 @@ fn decodeMapEntries(allocator: Allocator, data: []const u8, pair_count: usize, h
     }
     var offset: usize = 0;
     for (0..pair_count) |i| {
-        const key_result = try decode(allocator, data[offset..]);
+        const key_result = try decodeAt(allocator, data[offset..], depth + 1);
         offset += key_result.bytes_consumed;
         var key_value = key_result.value;
         errdefer key_value.deinit(allocator);
 
-        const val_result = try decode(allocator, data[offset..]);
+        const val_result = try decodeAt(allocator, data[offset..], depth + 1);
         offset += val_result.bytes_consumed;
         entries[i] = .{ .key = key_value, .value = val_result.value };
         filled = i + 1;
@@ -280,23 +296,23 @@ fn decodeMapEntries(allocator: Allocator, data: []const u8, pair_count: usize, h
     return .{ .value = .{ .map = entries }, .bytes_consumed = header_size + offset };
 }
 
-fn decodeArray8(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
+fn decodeArray8(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
     if (data.len < 3) return error.UnexpectedEnd;
     const size: usize = data[1];
     const count: usize = data[2];
     _ = size;
-    return try decodeArrayItems(allocator, data[3..], count, 3);
+    return try decodeArrayItems(allocator, data[3..], count, 3, depth);
 }
 
-fn decodeArray32(allocator: Allocator, data: []const u8) DecodeError!DecodeResult {
+fn decodeArray32(allocator: Allocator, data: []const u8, depth: u8) DecodeError!DecodeResult {
     if (data.len < 9) return error.UnexpectedEnd;
     const size: usize = readU32(data[1..5]);
     const count: usize = readU32(data[5..9]);
     _ = size;
-    return try decodeArrayItems(allocator, data[9..], count, 9);
+    return try decodeArrayItems(allocator, data[9..], count, 9, depth);
 }
 
-fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, header_size: usize) DecodeError!DecodeResult {
+fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, header_size: usize, depth: u8) DecodeError!DecodeResult {
     // First byte is the shared constructor (format code). An array carries one
     // even when it is empty, so it is read — and consumed — either way.
     if (data.len < 1) return error.UnexpectedEnd;
@@ -337,14 +353,14 @@ fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, header
             defer allocator.free(temp);
             temp[0] = constructor_code;
             @memcpy(temp[1 .. 1 + remaining.len], remaining);
-            const result = try decode(allocator, temp);
+            const result = try decodeAt(allocator, temp, depth + 1);
             items[i] = result.value;
             filled = i + 1;
             offset += result.bytes_consumed - 1; // -1 for constructor we prepended
         } else {
             temp_buf[0] = constructor_code;
             @memcpy(temp_buf[1 .. 1 + remaining.len], remaining);
-            const result = try decode(allocator, temp_buf[0 .. 1 + remaining.len]);
+            const result = try decodeAt(allocator, temp_buf[0 .. 1 + remaining.len], depth + 1);
             items[i] = result.value;
             filled = i + 1;
             offset += result.bytes_consumed - 1;
@@ -549,4 +565,50 @@ test "decoding a nested truncated list is safe" {
         0x40, 0xc0, 0x02,
         0x02, 0x40,
     }));
+}
+
+test "nesting deeper than the limit is refused rather than crashing the process" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    // A described type whose descriptor is another described type, and so on.
+    // Every level is one byte and one stack frame; before the limit, 200 KB of
+    // these — well inside an ordinary max-frame-size — aborted the process.
+    const nested = try allocator.alloc(u8, 200_000);
+    defer allocator.free(nested);
+    @memset(nested, 0x00);
+    try std.testing.expectError(error.NestingTooDeep, decode(arena.allocator(), nested));
+
+    // Nesting the decoder is expected to handle still works: a chain of
+    // described values, each `00 40 <inner>`, ending in a null.
+    const levels = max_nesting_depth - 4;
+    var shallow: [levels * 2 + 1]u8 = undefined;
+    for (0..levels) |i| {
+        shallow[i * 2] = 0x00;
+        shallow[i * 2 + 1] = 0x40;
+    }
+    shallow[levels * 2] = 0x40;
+    const result = try decode(arena.allocator(), &shallow);
+    try std.testing.expectEqual(shallow.len, result.bytes_consumed);
+}
+
+test "fuzz: decoding arbitrary bytes never crashes" {
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const data = buf[0..len];
+
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+
+            const result = decode(arena.allocator(), data) catch return;
+
+            // A decoder that consumed nothing would spin its caller forever,
+            // and one that consumed more than it was given read past the end.
+            try std.testing.expect(result.bytes_consumed >= 1);
+            try std.testing.expect(result.bytes_consumed <= data.len);
+        }
+    }.one, .{});
 }
