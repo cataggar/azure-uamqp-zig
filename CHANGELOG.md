@@ -54,6 +54,27 @@ Measured with `zig build bench`, ReleaseFast, allocations counted:
   broker over a real socket (#27). CI runs it against Apache Qpid Proton and
   Apache ActiveMQ Artemis, and it is a required check.
 - `zig build bench` (#29) and `zig build docs` (#32).
+- Hostile-input tests over every entry point reachable from the wire (#37):
+  ~500k seeded inputs through the decoder, the performative decoder, the
+  message decoder and the frame codec, the last fed in random-sized chunks.
+  One is a property rather than a smoke test: anything the decoder accepts
+  re-encodes and decodes back equal.
+- `examples/sender.zig` and `examples/receiver.zig` are complete programs
+  that open a socket and move a message (#39). They previously claimed to
+  open a connection and did not. CI now runs them against a broker.
+
+### Packaging
+
+- `LICENSE`, `readme.md` and `CHANGELOG.md` are included in the published
+  package (#38). `.paths` listed only the sources, so a fetched copy -- which
+  is a redistribution of MIT code, most of it Microsoft's -- arrived without
+  its notice.
+- `uamqp.version` is read from `build.zig.zon` instead of being a second copy
+  of the version that nothing checked (#38).
+- Module documentation used `///!`, which is not module documentation: Zig
+  attached it to the next declaration, usually a private `@import` (#36).
+  `zig build docs` would have published a reference with no module
+  documentation in it.
 
 ## 0.2.0
 
