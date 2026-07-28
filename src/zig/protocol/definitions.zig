@@ -1,7 +1,14 @@
 ///! AMQP 1.0 performative types (OASIS spec §2.7)
 ///!
-///! Each AMQP performative is represented as a Zig struct with encode/decode
-///! methods. This replaces the C macro-generated amqp_definitions.c.
+///! Each performative, delivery state and composite is a plain Zig struct.
+///! `described.zig` encodes and decodes them by reflecting over these
+///! declarations, so the field order here is the field order on the wire and a
+///! field without a default is a field the spec marks mandatory. This replaces
+///! the C macro-generated amqp_definitions.c; `codegen/amqp_definitions.xml` is
+///! the reference it is checked against.
+///!
+///! Where AMQP has three types and Zig has one `[]const u8`, the struct says
+///! which with `amqp_symbols`, `amqp_binaries` and `amqp_timestamps`.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AmqpValue = @import("../types/amqp_value.zig").AmqpValue;
@@ -48,6 +55,8 @@ pub const descriptor = struct {
     // Addressing
     pub const source: u64 = 0x0000000000000028;
     pub const target: u64 = 0x0000000000000029;
+
+    pub const @"error": u64 = 0x000000000000001d;
 };
 
 // ── Role ──────────────────────────────────────────────────────────────
@@ -94,6 +103,9 @@ pub const AmqpError = struct {
     condition: []const u8,
     description: ?[]const u8 = null,
     info: ?[]MapEntry = null,
+
+    pub const amqp_descriptor = descriptor.@"error";
+    pub const amqp_symbols: []const []const u8 = &.{"condition"};
 };
 
 // ── Open (§2.7.1) ─────────────────────────────────────────────────────
@@ -109,6 +121,8 @@ pub const Open = struct {
     offered_capabilities: ?[]const []const u8 = null,
     desired_capabilities: ?[]const []const u8 = null,
     properties: ?[]MapEntry = null,
+
+    pub const amqp_descriptor = descriptor.open;
 };
 
 // ── Begin (§2.7.2) ────────────────────────────────────────────────────
@@ -122,6 +136,8 @@ pub const Begin = struct {
     offered_capabilities: ?[]const []const u8 = null,
     desired_capabilities: ?[]const []const u8 = null,
     properties: ?[]MapEntry = null,
+
+    pub const amqp_descriptor = descriptor.begin;
 };
 
 // ── Attach (§2.7.3) ──────────────────────────────────────────────────
@@ -141,6 +157,8 @@ pub const Attach = struct {
     offered_capabilities: ?[]const []const u8 = null,
     desired_capabilities: ?[]const []const u8 = null,
     properties: ?[]MapEntry = null,
+
+    pub const amqp_descriptor = descriptor.attach;
 };
 
 // ── Flow (§2.7.4) ────────────────────────────────────────────────────
@@ -157,6 +175,8 @@ pub const Flow = struct {
     drain: bool = false,
     echo: bool = false,
     properties: ?[]MapEntry = null,
+
+    pub const amqp_descriptor = descriptor.flow;
 };
 
 // ── Transfer (§2.7.5) ────────────────────────────────────────────────
@@ -173,6 +193,9 @@ pub const Transfer = struct {
     is_resume: bool = false,
     aborted: bool = false,
     batchable: bool = false,
+
+    pub const amqp_descriptor = descriptor.transfer;
+    pub const amqp_binaries: []const []const u8 = &.{"delivery_tag"};
 };
 
 // ── Disposition (§2.7.6) ─────────────────────────────────────────────
@@ -184,6 +207,8 @@ pub const Disposition = struct {
     settled: bool = false,
     delivery_state: ?DeliveryState = null,
     batchable: bool = false,
+
+    pub const amqp_descriptor = descriptor.disposition;
 };
 
 // ── Detach (§2.7.7) ─────────────────────────────────────────────────
@@ -192,18 +217,24 @@ pub const Detach = struct {
     handle: u32,
     closed: bool = false,
     err: ?AmqpError = null,
+
+    pub const amqp_descriptor = descriptor.detach;
 };
 
 // ── End (§2.7.8) ────────────────────────────────────────────────────
 
 pub const End = struct {
     err: ?AmqpError = null,
+
+    pub const amqp_descriptor = descriptor.end;
 };
 
 // ── Close (§2.7.9) ──────────────────────────────────────────────────
 
 pub const Close = struct {
     err: ?AmqpError = null,
+
+    pub const amqp_descriptor = descriptor.close;
 };
 
 // ── Delivery State ──────────────────────────────────────────────────
@@ -219,16 +250,22 @@ pub const DeliveryState = union(enum) {
 pub const Received = struct {
     section_number: u32,
     section_offset: u64,
+
+    pub const amqp_descriptor = descriptor.received;
 };
 
 pub const Rejected = struct {
     err: ?AmqpError = null,
+
+    pub const amqp_descriptor = descriptor.rejected;
 };
 
 pub const Modified = struct {
     delivery_failed: ?bool = null,
     undeliverable_here: ?bool = null,
     message_annotations: ?[]MapEntry = null,
+
+    pub const amqp_descriptor = descriptor.modified;
 };
 
 // ── Source (§3.5.3) ─────────────────────────────────────────────────
@@ -253,6 +290,14 @@ pub const TerminusExpiryPolicy = enum {
             .never => "never",
         };
     }
+
+    pub fn fromSymbol(symbol: []const u8) ?TerminusExpiryPolicy {
+        inline for (@typeInfo(TerminusExpiryPolicy).@"enum".fields) |field| {
+            const value: TerminusExpiryPolicy = @enumFromInt(field.value);
+            if (std.mem.eql(u8, value.toSymbol(), symbol)) return value;
+        }
+        return null;
+    }
 };
 
 pub const Source = struct {
@@ -267,6 +312,9 @@ pub const Source = struct {
     default_outcome: ?DeliveryState = null,
     outcomes: ?[]const []const u8 = null,
     capabilities: ?[]const []const u8 = null,
+
+    pub const amqp_descriptor = descriptor.source;
+    pub const amqp_symbols: []const []const u8 = &.{"distribution_mode"};
 };
 
 // ── Target (§3.5.4) ─────────────────────────────────────────────────
@@ -279,31 +327,48 @@ pub const Target = struct {
     dynamic: bool = false,
     dynamic_node_properties: ?[]MapEntry = null,
     capabilities: ?[]const []const u8 = null,
+
+    pub const amqp_descriptor = descriptor.target;
 };
 
 // ── SASL Performatives (§5.3) ───────────────────────────────────────
 
 pub const SaslMechanisms = struct {
     sasl_server_mechanisms: []const []const u8,
+
+    pub const amqp_descriptor = descriptor.sasl_mechanisms;
 };
 
 pub const SaslInit = struct {
     mechanism: []const u8,
     initial_response: ?[]const u8 = null,
     hostname: ?[]const u8 = null,
+
+    pub const amqp_descriptor = descriptor.sasl_init;
+    pub const amqp_symbols: []const []const u8 = &.{"mechanism"};
+    pub const amqp_binaries: []const []const u8 = &.{"initial_response"};
 };
 
 pub const SaslChallenge = struct {
     challenge: []const u8,
+
+    pub const amqp_descriptor = descriptor.sasl_challenge;
+    pub const amqp_binaries: []const []const u8 = &.{"challenge"};
 };
 
 pub const SaslResponse = struct {
     response: []const u8,
+
+    pub const amqp_descriptor = descriptor.sasl_response;
+    pub const amqp_binaries: []const []const u8 = &.{"response"};
 };
 
 pub const SaslOutcome = struct {
     code: SaslCode,
     additional_data: ?[]const u8 = null,
+
+    pub const amqp_descriptor = descriptor.sasl_outcome;
+    pub const amqp_binaries: []const []const u8 = &.{"additional_data"};
 };
 
 // ── Performative Union ──────────────────────────────────────────────
@@ -354,6 +419,8 @@ pub const Header = struct {
     ttl: ?u32 = null,
     first_acquirer: bool = false,
     delivery_count: u32 = 0,
+
+    pub const amqp_descriptor = descriptor.header;
 };
 
 pub const Properties = struct {
@@ -370,6 +437,11 @@ pub const Properties = struct {
     group_id: ?[]const u8 = null,
     group_sequence: ?u32 = null,
     reply_to_group_id: ?[]const u8 = null,
+
+    pub const amqp_descriptor = descriptor.properties;
+    pub const amqp_symbols: []const []const u8 = &.{ "content_type", "content_encoding" };
+    pub const amqp_binaries: []const []const u8 = &.{"user_id"};
+    pub const amqp_timestamps: []const []const u8 = &.{ "absolute_expiry_time", "creation_time" };
 };
 
 // ── Tests ──────────────────────────────────────────────────────────────
