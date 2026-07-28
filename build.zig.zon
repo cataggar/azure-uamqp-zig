@@ -8,5 +8,10 @@
         "build.zig",
         "build.zig.zon",
         "src/zig",
+        // MIT requires the notice to travel with the code, and a fetched
+        // package is a redistribution.
+        "LICENSE",
+        "readme.md",
+        "CHANGELOG.md",
     },
 }
