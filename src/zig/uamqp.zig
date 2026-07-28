@@ -17,6 +17,7 @@ pub const decoder = @import("types/decoder.zig");
 pub const frame = @import("protocol/frame.zig");
 pub const frame_codec = @import("protocol/frame_codec.zig");
 pub const definitions = @import("protocol/definitions.zig");
+pub const described = @import("protocol/described.zig");
 pub const connection = @import("protocol/connection.zig");
 pub const session = @import("protocol/session.zig");
 pub const link = @import("protocol/link.zig");
