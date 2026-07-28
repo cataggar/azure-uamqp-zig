@@ -242,6 +242,12 @@ fn descriptorCode(described: amqp_value.Described) Error!u64 {
     };
 }
 
+/// Decode a described type's body — the list of its fields — when the
+/// descriptor has already been read off, as it has for a message section.
+pub fn fromBody(arena: Allocator, comptime T: type, body: AmqpValue) Error!T {
+    return fromDescribed(arena, T, body);
+}
+
 fn fromDescribed(arena: Allocator, comptime T: type, body: AmqpValue) Error!T {
     const items: []const AmqpValue = switch (body) {
         .list => |l| l,

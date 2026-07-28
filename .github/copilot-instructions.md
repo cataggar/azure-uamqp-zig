@@ -22,7 +22,7 @@ history for reference.
 
 ```sh
 zig build                 # static lib "uamqp" + sender/receiver example binaries
-zig build test            # whole suite (55 tests today)
+zig build test            # whole suite
 zig build test --summary all           # show per-step test counts
 zig test src/zig/types/decoder.zig     # one module (+ everything it imports)
 zig test src/zig/uamqp.zig --test-filter "map"   # one test / subset, by name substring

@@ -11,6 +11,7 @@ const defs = @import("definitions.zig");
 const described = @import("described.zig");
 const encoder = @import("../types/encoder.zig");
 const Connection = @import("connection.zig").Connection;
+const Session = @import("session.zig").Session;
 
 /// A transport that keeps everything written to it, and can build the frames
 /// a real peer would write back.
@@ -150,5 +151,80 @@ pub const TestPeer = struct {
         const bytes = self.written();
         const header = try FrameHeader.parse(bytes[0..8]);
         return described.decodePerformative(self.allocator, bytes[8..header.size]);
+    }
+};
+
+/// A connection and session already open, for tests of the layers above them.
+///
+/// Heap-allocated because a connection and a session both register the
+/// address they live at: the fixture must not move once `init` returns.
+pub const Fixture = struct {
+    peer: TestPeer,
+    conn: Connection,
+    session: Session = undefined,
+    allocator: Allocator,
+
+    pub fn init(allocator: Allocator) !*Fixture {
+        const self = try allocator.create(Fixture);
+        self.* = .{
+            .peer = TestPeer.init(allocator),
+            .conn = Connection.init(allocator, "container", null, .{}),
+            .allocator = allocator,
+        };
+        try self.peer.openConnection(&self.conn);
+        self.session = Session.init(allocator, &self.conn, .{});
+        try self.session.begin();
+        try self.conn.onBytesReceived(try self.peer.frame(1, .{ .begin = .{
+            .remote_channel = 0,
+            .next_outgoing_id = 0,
+            .incoming_window = 1024,
+            .outgoing_window = 1024,
+        } }));
+        self.peer.clear();
+        return self;
+    }
+
+    pub fn deinit(self: *Fixture) void {
+        self.session.deinit();
+        self.conn.deinit();
+        self.peer.deinit();
+        self.allocator.destroy(self);
+    }
+
+    /// Bring a link to `attached`, leaving `peer.written()` holding whatever
+    /// the code under test wrote *in response* to the peer's Attach and
+    /// nothing of the handshake itself.
+    pub fn attach(self: *Fixture, link: anytype, peer_handle: u32) !void {
+        try link.attach();
+        try self.respondAttach(link, peer_handle);
+    }
+
+    /// Answer an Attach the link has already sent, for a link something else
+    /// attached.
+    pub fn respondAttach(self: *Fixture, link: anytype, peer_handle: u32) !void {
+        self.peer.clear();
+        try self.conn.onBytesReceived(try self.peer.frame(1, .{ .attach = .{
+            .name = link.name,
+            .handle = peer_handle,
+            .role = if (link.role == .sender) .receiver else .sender,
+            .initial_delivery_count = if (link.role == .receiver) 0 else null,
+        } }));
+    }
+
+    /// Feed the link a Flow granting it credit, as a receiver would.
+    ///
+    /// Clears first rather than last, so that anything sent because credit
+    /// arrived is still there to inspect.
+    pub fn grant(self: *Fixture, link: anytype, credit: u32) !void {
+        self.peer.clear();
+        try self.conn.onBytesReceived(try self.peer.frame(1, .{ .flow = .{
+            .next_incoming_id = 0,
+            .incoming_window = 1024,
+            .next_outgoing_id = 0,
+            .outgoing_window = 1024,
+            .handle = link.endpoint().?.input_handle,
+            .delivery_count = link.delivery_count,
+            .link_credit = credit,
+        } }));
     }
 };

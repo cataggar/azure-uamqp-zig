@@ -49,6 +49,8 @@ pub const OnTransferReceived = *const fn (
     payload: []const u8,
 ) ?defs.DeliveryState;
 
+/// Called when a sender that had run out of credit is given some again, so
+/// that work parked for want of credit can resume.
 pub const OnLinkFlowOn = *const fn (context: ?*anyopaque) void;
 
 pub const OnDeliverySettled = *const fn (
@@ -135,6 +137,8 @@ pub const Link = struct {
     on_state_changed_context: ?*anyopaque,
     on_transfer_received: ?OnTransferReceived,
     on_transfer_received_context: ?*anyopaque,
+    on_flow_on: ?OnLinkFlowOn,
+    on_flow_on_context: ?*anyopaque,
 
     /// The session is told where this link lives by `listen` or `attach`, so
     /// the link must not be moved after either has been called.
@@ -180,6 +184,8 @@ pub const Link = struct {
             .on_state_changed_context = null,
             .on_transfer_received = null,
             .on_transfer_received_context = null,
+            .on_flow_on = null,
+            .on_flow_on_context = null,
         };
     }
 
@@ -376,8 +382,14 @@ pub const Link = struct {
             // (§2.6.7). Computing it any other way loses whatever crossed on
             // the wire while the Flow was in flight.
             if (flow_perf.link_credit) |credit| {
+                const was_blocked = self.link_credit == 0;
                 const their_count = flow_perf.delivery_count orelse 0;
                 self.link_credit = their_count +% credit -% self.delivery_count;
+                // A sender with nothing to send on has usually parked the
+                // work; this is the only moment it can learn to resume.
+                if (was_blocked and self.link_credit > 0) {
+                    if (self.on_flow_on) |cb| cb(self.on_flow_on_context);
+                }
             }
         } else {
             if (flow_perf.delivery_count) |count| self.delivery_count = count;
@@ -568,69 +580,7 @@ pub const Link = struct {
 const testing = std.testing;
 const Connection = @import("connection.zig").Connection;
 const TestPeer = @import("test_peer.zig").TestPeer;
-
-/// A connection, session and peer wired together, with the session mapped on
-/// peer channel 1.
-const Fixture = struct {
-    peer: TestPeer,
-    conn: Connection,
-    session: Session = undefined,
-    allocator: Allocator,
-
-    fn init(allocator: Allocator) !*Fixture {
-        const self = try allocator.create(Fixture);
-        self.* = .{
-            .peer = TestPeer.init(allocator),
-            .conn = Connection.init(allocator, "container", null, .{}),
-            .allocator = allocator,
-        };
-        try self.peer.openConnection(&self.conn);
-        self.session = Session.init(allocator, &self.conn, .{});
-        try self.session.begin();
-        try self.conn.onBytesReceived(try self.peer.frame(1, .{ .begin = .{
-            .remote_channel = 0,
-            .next_outgoing_id = 0,
-            .incoming_window = 1024,
-            .outgoing_window = 1024,
-        } }));
-        self.peer.clear();
-        return self;
-    }
-
-    fn deinit(self: *Fixture) void {
-        self.session.deinit();
-        self.conn.deinit();
-        self.peer.deinit();
-        self.allocator.destroy(self);
-    }
-
-    /// Bring a link to `attached`, with nothing of the handshake left in
-    /// `peer.written()`.
-    fn attach(self: *Fixture, link: *Link, peer_handle: u32) !void {
-        try link.attach();
-        try self.conn.onBytesReceived(try self.peer.frame(1, .{ .attach = .{
-            .name = link.name,
-            .handle = peer_handle,
-            .role = if (link.role == .sender) .receiver else .sender,
-            .initial_delivery_count = if (link.role == .receiver) 0 else null,
-        } }));
-        self.peer.clear();
-    }
-
-    /// Feed the link a Flow granting it credit, as a receiver would.
-    fn grant(self: *Fixture, link: *Link, credit: u32) !void {
-        try self.conn.onBytesReceived(try self.peer.frame(1, .{ .flow = .{
-            .next_incoming_id = 0,
-            .incoming_window = 1024,
-            .next_outgoing_id = 0,
-            .outgoing_window = 1024,
-            .handle = link.endpoint().?.input_handle,
-            .delivery_count = link.delivery_count,
-            .link_credit = credit,
-        } }));
-        self.peer.clear();
-    }
-};
+const Fixture = @import("test_peer.zig").Fixture;
 
 test "Link init and state" {
     const allocator = testing.allocator;
