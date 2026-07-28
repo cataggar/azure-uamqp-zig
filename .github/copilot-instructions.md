@@ -8,10 +8,12 @@ history for reference.
 
 - **Live:** `build.zig`, `build.zig.zon`, `src/zig/**`, `examples/*.zig`.
 - **Legacy (upstream C, not built by anything here):** `src/*.c`, `inc/`, `tests/`,
-  `samples/`, `tools/`, `configs/`, `jenkins/`, `CMakeLists.txt`. The `deps/` submodules
-  (`azure-c-shared-utility`, `umock-c`, `azure-ctest`, ...) are **not checked out**, so
-  the CMake build and the C `*_ut` tests cannot run. Fix bugs by changing the Zig code,
-  not the C code.
+  `samples/`. There is no C build any more — CMake, the `deps/` submodules, the Jenkins
+  and packaging scripts, and the C# definition generator were removed once nothing could
+  build them. Fix bugs by changing the Zig code, not the C code.
+- `codegen/amqp_definitions.xml` (with its `.xsd`/`.dtd`) is the machine-readable AMQP 1.0
+  definition that generated the C `amqp_definitions.c`. It is kept as the source of truth
+  for `src/zig/protocol/definitions.zig`.
 - `devdoc/*_requirements.md` are the upstream per-module requirement specs. They still
   describe the intended behavior accurately and are the best reference when porting or
   extending a module (`connection_requirements.md`, `amqpvalue_requirements.md`, ...).
