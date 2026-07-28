@@ -366,31 +366,32 @@ fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, total:
         allocator.free(items);
     }
 
-    // Decode each item by prepending the constructor byte
-    var offset: usize = 1; // skip constructor
+    // The elements share the one constructor at the head of the body, so
+    // decoding element i means handing the decoder that constructor followed
+    // by element i. Building that by copying the constructor in front of
+    // everything still undecoded made the work quadratic in the element count,
+    // and allocated a fresh buffer per element once the remainder outgrew 256
+    // bytes: a 4096-element array cost 4034 allocations and 2.3ms.
+    //
+    // Take one mutable copy of the body instead, and write the constructor
+    // into the byte immediately before each element as it is reached. That
+    // byte is the last byte of the element just decoded, which is safe to
+    // overwrite because decoded values own their bytes rather than borrow
+    // them. The first element needs nothing done: the constructor is already
+    // in front of it.
+    var stack_buf: [256]u8 = undefined;
+    const heap: ?[]u8 = if (data.len <= stack_buf.len) null else try allocator.alloc(u8, data.len);
+    defer if (heap) |h| allocator.free(h);
+    const scratch = heap orelse stack_buf[0..data.len];
+    @memcpy(scratch, data);
+
+    var offset: usize = 1; // past the shared constructor
     for (0..count) |i| {
-        // Build a temporary buffer: constructor + remaining data
-        // For efficiency, we decode by manually handling the format code
-        var temp_buf: [256]u8 = undefined;
-        const remaining = data[offset..];
-        if (remaining.len + 1 > temp_buf.len) {
-            // Fall back to allocated buffer for large items
-            const temp = try allocator.alloc(u8, remaining.len + 1);
-            defer allocator.free(temp);
-            temp[0] = constructor_code;
-            @memcpy(temp[1 .. 1 + remaining.len], remaining);
-            const result = try decodeAt(allocator, temp, depth + 1);
-            items[i] = result.value;
-            filled = i + 1;
-            offset += result.bytes_consumed - 1; // -1 for constructor we prepended
-        } else {
-            temp_buf[0] = constructor_code;
-            @memcpy(temp_buf[1 .. 1 + remaining.len], remaining);
-            const result = try decodeAt(allocator, temp_buf[0 .. 1 + remaining.len], depth + 1);
-            items[i] = result.value;
-            filled = i + 1;
-            offset += result.bytes_consumed - 1;
-        }
+        scratch[offset - 1] = constructor_code;
+        const result = try decodeAt(allocator, scratch[offset - 1 ..], depth + 1);
+        items[i] = result.value;
+        filled = i + 1;
+        offset += result.bytes_consumed - 1;
     }
     if (offset != data.len) return error.InvalidData;
     return .{ .value = .{ .array = items }, .bytes_consumed = total };
@@ -720,4 +721,66 @@ test "a compound consumes exactly what it declared" {
     defer result.value.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), result.value.list.len);
     try std.testing.expectEqual(@as(usize, 3), result.bytes_consumed);
+}
+
+test "decoding an array does not allocate per element" {
+    // The constructor used to be copied in front of everything still
+    // undecoded, once per element: quadratic work, and a fresh buffer every
+    // time the remainder was larger than 256 bytes. The count of allocations
+    // is the part worth pinning, because it is what made a large array cost
+    // so much more than the bytes on the wire suggest.
+    const Counting = struct {
+        parent: Allocator,
+        count: usize = 0,
+
+        fn alloc(ctx: *anyopaque, len: usize, a: std.mem.Alignment, ra: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.count += 1;
+            return self.parent.rawAlloc(len, a, ra);
+        }
+        fn resize(ctx: *anyopaque, buf: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.parent.rawResize(buf, a, new_len, ra);
+        }
+        fn remap(ctx: *anyopaque, buf: []u8, a: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.parent.rawRemap(buf, a, new_len, ra);
+        }
+        fn free(ctx: *anyopaque, buf: []u8, a: std.mem.Alignment, ra: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.parent.rawFree(buf, a, ra);
+        }
+        fn allocator(self: *@This()) Allocator {
+            return .{ .ptr = self, .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            } };
+        }
+    };
+
+    const enc = @import("encoder.zig");
+    var counts: [2]usize = undefined;
+    // Two sizes an order of magnitude apart, both well past the 256-byte
+    // buffer that used to decide whether an element allocated.
+    for ([_]usize{ 128, 2048 }, 0..) |n, slot| {
+        const items = try std.testing.allocator.alloc(AmqpValue, n);
+        defer std.testing.allocator.free(items);
+        for (items, 0..) |*it, i| it.* = .{ .uint = @intCast(i) };
+
+        var buf = enc.Buffer.initDynamic(std.testing.allocator);
+        defer buf.deinit();
+        try enc.encode(.{ .array = items }, &buf);
+
+        var counting = Counting{ .parent = std.testing.allocator };
+        const ca = counting.allocator();
+        var result = try decode(ca, buf.written());
+        try std.testing.expectEqual(n, result.value.array.len);
+        result.value.deinit(ca);
+        counts[slot] = counting.count;
+    }
+
+    // Sixteen times the elements, the same number of allocations.
+    try std.testing.expectEqual(counts[0], counts[1]);
 }
