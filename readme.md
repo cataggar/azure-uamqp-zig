@@ -105,7 +105,7 @@ stack — SASL, open, begin, attach, transfer, disposition, and an orderly
 close.
 
 ```sh
-pip install python-qpid-proton
+pip install python-qpid-proton==0.40.0
 python3 interop/broker.py 127.0.0.1:5672 &   # Apache Qpid Proton
 AMQP_PORT=5672 zig build interop
 ```
@@ -113,7 +113,9 @@ AMQP_PORT=5672 zig build interop
 It is configured by environment: `AMQP_HOST`, `AMQP_PORT`, `AMQP_USER` (SASL
 PLAIN when set, ANONYMOUS when not), `AMQP_PASSWORD`, `AMQP_ADDRESS` and
 `AMQP_TIMEOUT_MS`. Point it at anything that speaks AMQP 1.0. CI runs it
-against Apache Qpid Proton and Apache ActiveMQ Artemis.
+against both Apache Qpid Proton and Apache ActiveMQ Artemis, and it is a
+required check: two peers rather than one because they disagree, and the
+disagreement is where the bugs are.
 
 ### Benchmarks
 

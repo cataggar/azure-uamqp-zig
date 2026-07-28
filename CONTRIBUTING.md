@@ -23,14 +23,20 @@ zig test src/zig/uamqp.zig --test-filter "map"   # one test by name substring
 zig fmt --check src examples interop build.zig
 ```
 
-Anything that changes what goes on the wire wants the interop check as well,
-which needs a broker to talk to:
+The interop check is required to merge, so it is worth running before you
+push anything that changes what goes on the wire. It needs a broker to talk
+to:
 
 ```sh
-pip install python-qpid-proton
+pip install python-qpid-proton==0.40.0
 python3 interop/broker.py 127.0.0.1:5672 &
 AMQP_PORT=5672 zig build interop
 ```
+
+CI runs it twice, against Apache Qpid Proton and Apache ActiveMQ Artemis.
+Two peers rather than one because they disagree: Artemis pipelines its AMQP
+header with the SASL outcome and Proton does not, and that difference is how
+a real bug in `Connection.open` was found.
 
 A test only runs if its file is reachable from `src/zig/uamqp.zig`, so a new
 `.zig` file must be re-exported there or its tests silently never execute.

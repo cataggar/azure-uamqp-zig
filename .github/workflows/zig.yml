@@ -72,8 +72,11 @@ jobs:
       - name: Build
         run: zig build
 
+      # Pinned because this job is a required check: an unpinned install
+      # means an upstream release can block every merge in the repository
+      # on a morning nobody changed anything. Bump it deliberately.
       - name: Install Apache Qpid Proton
-        run: pip install --disable-pip-version-check python-qpid-proton
+        run: pip install --disable-pip-version-check python-qpid-proton==0.40.0
 
       - name: Start the Proton broker
         run: |
