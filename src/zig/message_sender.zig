@@ -1,8 +1,8 @@
-///! Sending messages over an attached sender link.
-///!
-///! Replaces message_sender.c — the layer between "a message" and "a link":
-///! it serializes the message, waits for credit rather than failing without
-///! it, and turns the peer's disposition into a per-send completion.
+//! Sending messages over an attached sender link.
+//!
+//! Replaces message_sender.c — the layer between "a message" and "a link":
+//! it serializes the message, waits for credit rather than failing without
+//! it, and turns the peer's disposition into a per-send completion.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

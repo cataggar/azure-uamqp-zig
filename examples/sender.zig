@@ -1,6 +1,6 @@
-///! Example: AMQP message sender
-///!
-///! Demonstrates creating a connection, session, link, and sending a message.
+//! Example: AMQP message sender
+//!
+//! Demonstrates creating a connection, session, link, and sending a message.
 const std = @import("std");
 const uamqp = @import("uamqp");
 

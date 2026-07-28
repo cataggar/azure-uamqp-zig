@@ -1,8 +1,8 @@
-///! Receiving messages over an attached receiver link.
-///!
-///! Replaces message_receiver.c — grants credit, reassembles and decodes each
-///! delivery into a `Message`, and settles it with whatever the handler
-///! decided.
+//! Receiving messages over an attached receiver link.
+//!
+//! Replaces message_receiver.c — grants credit, reassembles and decodes each
+//! delivery into a `Message`, and settles it with whatever the handler
+//! decided.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

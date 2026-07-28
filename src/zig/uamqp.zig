@@ -1,7 +1,7 @@
-///! Azure uAMQP - AMQP 1.0 protocol library for Zig
-///!
-///! A Zig implementation of the OASIS AMQP 1.0 protocol.
-///! Ported from azure-uamqp-c v1.2.12.
+//! Azure uAMQP - AMQP 1.0 protocol library for Zig
+//!
+//! A Zig implementation of the OASIS AMQP 1.0 protocol.
+//! Ported from azure-uamqp-c v1.2.12.
 
 // Core types
 pub const types = @import("types/amqp_value.zig");

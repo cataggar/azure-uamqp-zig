@@ -1,8 +1,8 @@
-///! A scripted AMQP peer for tests.
-///!
-///! It stands in for the transport: everything the code under test writes is
-///! kept for inspection, and `frame` builds the bytes a real peer would write
-///! back. Mirrors the `test_peer` helpers in azure-sdk-for-zig.
+//! A scripted AMQP peer for tests.
+//!
+//! It stands in for the transport: everything the code under test writes is
+//! kept for inspection, and `frame` builds the bytes a real peer would write
+//! back. Mirrors the `test_peer` helpers in azure-sdk-for-zig.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const frame_mod = @import("frame.zig");

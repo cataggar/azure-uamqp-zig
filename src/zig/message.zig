@@ -1,9 +1,9 @@
-///! AMQP 1.0 Message abstraction (OASIS spec §3.2)
-///!
-///! Combines header, delivery-annotations, message-annotations,
-///! properties, application-properties, body, and footer into a
-///! single message structure, and converts it to and from the sequence of
-///! described sections that makes up a transfer's payload.
+//! AMQP 1.0 Message abstraction (OASIS spec §3.2)
+//!
+//! Combines header, delivery-annotations, message-annotations,
+//! properties, application-properties, body, and footer into a
+//! single message structure, and converts it to and from the sequence of
+//! described sections that makes up a transfer's payload.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const defs = @import("protocol/definitions.zig");

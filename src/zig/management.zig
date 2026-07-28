@@ -1,7 +1,7 @@
-///! AMQP Management operations (OASIS AMQP Management spec §3.1)
-///!
-///! A request-response pair of links to a management node: requests go out on
-///! the sender, and each response is matched to its request by correlation-id.
+//! AMQP Management operations (OASIS AMQP Management spec §3.1)
+//!
+//! A request-response pair of links to a management node: requests go out on
+//! the sender, and each response is matched to its request by correlation-id.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const defs = @import("protocol/definitions.zig");

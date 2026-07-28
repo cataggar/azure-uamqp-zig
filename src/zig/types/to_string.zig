@@ -1,26 +1,26 @@
-///! Rendering an `AmqpValue` as text, for logs and diagnostics.
-///!
-///! Replaces amqpvalue_to_string.c. The syntax is meant to be read by a human
-///! debugging a trace, and distinguishes the types a wire dump otherwise
-///! blurs together: a symbol from a string, and — the distinction issue #2
-///! was about — an array from a list.
-///!
-///! ```text
-///! null            null
-///! boolean         true / false
-///! integers        decimal, unsigned and signed alike
-///! float, double   decimal, `nan` / `inf` as the formatter renders them
-///! char            'a', or U+00A0 when not printable
-///! timestamp       timestamp(1571233434.152)
-///! uuid            urn:uuid:00112233-4455-6677-8899-aabbccddeeff
-///! binary          b"00ff1a"
-///! string          "text"
-///! symbol          :symbol
-///! list            [1, "two"]
-///! array           @[1, 2]
-///! map             {"key": 1}
-///! described       :amqp:accepted:list([])
-///! ```
+//! Rendering an `AmqpValue` as text, for logs and diagnostics.
+//!
+//! Replaces amqpvalue_to_string.c. The syntax is meant to be read by a human
+//! debugging a trace, and distinguishes the types a wire dump otherwise
+//! blurs together: a symbol from a string, and — the distinction issue #2
+//! was about — an array from a list.
+//!
+//! ```text
+//! null            null
+//! boolean         true / false
+//! integers        decimal, unsigned and signed alike
+//! float, double   decimal, `nan` / `inf` as the formatter renders them
+//! char            'a', or U+00A0 when not printable
+//! timestamp       timestamp(1571233434.152)
+//! uuid            urn:uuid:00112233-4455-6677-8899-aabbccddeeff
+//! binary          b"00ff1a"
+//! string          "text"
+//! symbol          :symbol
+//! list            [1, "two"]
+//! array           @[1, 2]
+//! map             {"key": 1}
+//! described       :amqp:accepted:list([])
+//! ```
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;

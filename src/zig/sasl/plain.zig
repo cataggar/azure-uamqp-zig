@@ -1,6 +1,6 @@
-///! SASL PLAIN mechanism (RFC 4616)
-///!
-///! Encodes credentials as: \0<authcid>\0<passwd>
+//! SASL PLAIN mechanism (RFC 4616)
+//!
+//! Encodes credentials as: \0<authcid>\0<passwd>
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mechanism = @import("mechanism.zig").Mechanism;
