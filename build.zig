@@ -88,4 +88,15 @@ pub fn build(b: *std.Build) void {
     run_bench.step.dependOn(&bench_exe.step);
     const bench_step = b.step("bench", "Measure the codec and the send path");
     bench_step.dependOn(&run_bench.step);
+
+    // API documentation, generated from the doc comments. Written to
+    // zig-out/docs, which needs serving rather than opening: the viewer
+    // fetches the sources over HTTP.
+    const docs = b.addInstallDirectory(.{
+        .source_dir = lib.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    const docs_step = b.step("docs", "Generate API documentation");
+    docs_step.dependOn(&docs.step);
 }

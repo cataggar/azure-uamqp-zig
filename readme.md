@@ -127,6 +127,18 @@ no number at all because it looks like one. It reports allocations per
 operation alongside the timings, which is the number that stays meaningful on
 a noisy machine.
 
+### API documentation
+
+```sh
+zig build docs
+python3 -m http.server -d zig-out/docs
+```
+
+The viewer fetches the sources over HTTP, so it has to be served rather than
+opened as a file. CI builds it on every push: autodoc parses every declaration,
+so a doc comment that refers to something that no longer exists fails the build
+instead of waiting to be noticed by a reader.
+
 ### Logging
 
 Nothing is logged above `debug` on a healthy connection. State changes and a
