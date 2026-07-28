@@ -15,6 +15,24 @@ const testing = std.testing;
 
 const log = std.log.scoped(.amqp_connection);
 
+/// A source of milliseconds, supplied by the caller.
+///
+/// Reading a clock in Zig 0.16 goes through an `Io`, and this library owns
+/// neither the transport nor an event loop, so it does not own the clock
+/// either: pass one in, the same way the send function is passed in. Tests
+/// pass one they can wind by hand.
+///
+/// Elapsed times computed from it are clamped at zero, so a clock that steps
+/// backwards costs a heartbeat rather than panicking.
+pub const Clock = struct {
+    context: ?*anyopaque = null,
+    read_ms: *const fn (context: ?*anyopaque) i64,
+
+    pub fn nowMs(self: Clock) i64 {
+        return self.read_ms(self.context);
+    }
+};
+
 /// Connection states per AMQP 1.0 §2.4.6
 pub const ConnectionState = enum {
     start,
@@ -97,7 +115,9 @@ pub const Connection = struct {
     /// `onBytesReceived`.
     pending_error: ?anyerror,
 
-    // Timing
+    // Timing. Null until `setClock`; without it there is nothing to compare
+    // an idle timeout against.
+    clock: ?Clock,
     last_frame_received_ms: i64,
     last_frame_sent_ms: i64,
 
@@ -117,6 +137,7 @@ pub const Connection = struct {
             max_frame_size: u32 = 4294967295,
             channel_max: u16 = 65535,
             idle_timeout_ms: ?u32 = null,
+            clock: ?Clock = null,
         },
     ) Connection {
         return .{
@@ -137,9 +158,9 @@ pub const Connection = struct {
             .header_bytes_received = 0,
             .subscribed = false,
             .pending_error = null,
-            // TODO: replace with proper clock source; zero placeholder for now
-            .last_frame_received_ms = 0,
-            .last_frame_sent_ms = 0,
+            .clock = opts.clock,
+            .last_frame_received_ms = if (opts.clock) |c| c.nowMs() else 0,
+            .last_frame_sent_ms = if (opts.clock) |c| c.nowMs() else 0,
             .on_state_changed = null,
             .on_state_changed_context = null,
             .io_send = null,
@@ -160,6 +181,14 @@ pub const Connection = struct {
     ) void {
         self.io_send = send_fn;
         self.io_context = context;
+    }
+
+    /// Supply the clock used for idle timeouts and keep-alives, and start
+    /// both intervals from now.
+    pub fn setClock(self: *Connection, clock: Clock) void {
+        self.clock = clock;
+        self.last_frame_received_ms = clock.nowMs();
+        self.last_frame_sent_ms = clock.nowMs();
     }
 
     /// Set the state change callback.
@@ -330,31 +359,36 @@ pub const Connection = struct {
         return data[take..];
     }
 
-    /// Called periodically to handle idle timeouts and keep-alives.
+    /// Called periodically to send keep-alives and detect a peer that has
+    /// gone quiet. Returns `error.IdleTimeout` once the peer has been silent
+    /// for longer than the idle timeout we advertised.
     pub fn doWork(self: *Connection) !void {
-        // TODO: replace with proper clock source
-        const now: i64 = 0;
+        if (self.state != .opened) return;
+        if (self.idle_timeout_ms == null and self.remote_idle_timeout_ms == null) return;
+        // Idle handling is entirely about elapsed time, so there is nothing
+        // honest to do without a clock — quietly doing nothing would look
+        // like a healthy connection.
+        if (self.clock == null) return error.NoClockConfigured;
 
-        // Check if remote peer has timed out
-        if (self.remote_idle_timeout_ms) |timeout| {
-            if (self.state == .opened) {
-                const elapsed: u64 = @intCast(now - self.last_frame_received_ms);
-                if (elapsed > @as(u64, timeout) * 2) {
-                    log.err("Remote idle timeout exceeded", .{});
-                    self.setState(.err);
-                    return;
-                }
+        // The peer must send something within the idle timeout *we*
+        // advertised in our Open — that is the promise it made by accepting
+        // it (§2.4.5).
+        if (self.idle_timeout_ms) |timeout| {
+            if (self.elapsedSince(self.last_frame_received_ms) > timeout) {
+                log.warn("Peer idle for longer than the {d}ms timeout we advertised", .{timeout});
+                // Saying why is a courtesy the peer may not be alive to hear.
+                self.close("amqp:resource-limit-exceeded", "idle timeout exceeded") catch {};
+                self.setState(.err);
+                return error.IdleTimeout;
             }
         }
 
-        // Send empty frame as keep-alive if our idle timeout is configured
-        if (self.idle_timeout_ms) |timeout| {
-            if (self.state == .opened) {
-                const elapsed: u64 = @intCast(now - self.last_frame_sent_ms);
-                // Send keep-alive at half the timeout interval
-                if (elapsed > @as(u64, timeout) / 2) {
-                    try self.sendEmptyFrame();
-                }
+        // Conversely, the peer will drop us if we are silent for longer than
+        // the timeout *it* advertised, so an empty frame goes out at half
+        // that, leaving a whole interval of slack for a slow round trip.
+        if (self.remote_idle_timeout_ms) |timeout| {
+            if (timeout > 0 and self.elapsedSince(self.last_frame_sent_ms) >= timeout / 2) {
+                try self.sendEmptyFrame();
             }
         }
     }
@@ -384,6 +418,8 @@ pub const Connection = struct {
     }
 
     fn handleFrame(self: *Connection, header: FrameHeader, body: []const u8) !void {
+        // Any frame at all proves the peer is alive, heartbeats included.
+        self.last_frame_received_ms = self.nowMs();
         if (header.channel > self.channel_max) return error.ChannelOutOfRange;
 
         // An empty frame is a heartbeat: it says the peer is alive and nothing
@@ -512,6 +548,18 @@ pub const Connection = struct {
         try self.sendBytes(buf);
     }
 
+    fn nowMs(self: *Connection) i64 {
+        const clock = self.clock orelse return self.last_frame_received_ms;
+        return clock.nowMs();
+    }
+
+    /// Milliseconds since `since`, never negative: a wall clock can step
+    /// backwards, and the subtraction used to be `@intCast`, which panics.
+    fn elapsedSince(self: *Connection, since: i64) u64 {
+        const delta = self.nowMs() -| since;
+        return if (delta < 0) 0 else @intCast(delta);
+    }
+
     fn setState(self: *Connection, new_state: ConnectionState) void {
         if (self.state == new_state) return;
         const prev = self.state;
@@ -525,7 +573,7 @@ pub const Connection = struct {
     fn sendBytes(self: *Connection, data: []const u8) !void {
         if (self.io_send) |send_fn| {
             try send_fn(self.io_context, data);
-            self.last_frame_sent_ms = 0; // TODO: replace with proper clock source
+            self.last_frame_sent_ms = self.nowMs();
         } else {
             return error.NoIoConfigured;
         }
@@ -930,4 +978,210 @@ test "sending before the connection is open is refused" {
     try testing.expectError(error.NoIoConfigured, conn.open());
     // Close is not a thing that can happen from `start`.
     try testing.expectError(error.InvalidState, conn.close(null, null));
+}
+
+/// A clock the test winds by hand, so idle timeouts are exercised in
+/// microseconds rather than minutes.
+const ManualClock = struct {
+    ms: i64 = 0,
+
+    fn read(context: ?*anyopaque) i64 {
+        const self: *ManualClock = @ptrCast(@alignCast(context.?));
+        return self.ms;
+    }
+
+    fn clock(self: *ManualClock) Clock {
+        return .{ .context = self, .read_ms = read };
+    }
+
+    fn advance(self: *ManualClock, by: i64) void {
+        self.ms += by;
+    }
+};
+
+/// The 8 bytes of an empty frame: a header claiming a body that is not there.
+fn isHeartbeat(bytes: []const u8) bool {
+    if (bytes.len != frame_mod.frame_header_size) return false;
+    const header = FrameHeader.parse(bytes[0..frame_mod.frame_header_size]) catch return false;
+    return header.frame_type == .amqp and header.channel == 0 and header.bodySize() == 0;
+}
+
+test "a keep-alive goes out at half the timeout the peer advertised" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var clock = ManualClock{ .ms = 1_000_000 };
+    var conn = Connection.init(allocator, "c", null, .{ .clock = clock.clock() });
+    defer conn.deinit();
+    try peer.openConnectionAdvertising(&conn, 10_000);
+
+    // A whisker short of half is still too early: the point of halving is to
+    // leave a full interval of slack, not to send twice as often.
+    clock.advance(4_999);
+    try conn.doWork();
+    try testing.expectEqual(@as(usize, 0), peer.written().len);
+
+    clock.advance(1);
+    try conn.doWork();
+    try testing.expect(isHeartbeat(peer.written()));
+
+    // Having just sent one, the interval starts over.
+    peer.clear();
+    try conn.doWork();
+    try testing.expectEqual(@as(usize, 0), peer.written().len);
+
+    clock.advance(5_000);
+    try conn.doWork();
+    try testing.expect(isHeartbeat(peer.written()));
+}
+
+test "no keep-alives when the peer advertised no idle timeout" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var clock = ManualClock{};
+    var conn = Connection.init(allocator, "c", null, .{
+        .idle_timeout_ms = 30_000,
+        .clock = clock.clock(),
+    });
+    defer conn.deinit();
+    try peer.openConnection(&conn);
+
+    // The peer never promised to drop us, so silence costs nothing.
+    clock.advance(29_000);
+    try conn.doWork();
+    try testing.expectEqual(@as(usize, 0), peer.written().len);
+}
+
+test "anything else we send postpones the keep-alive" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var clock = ManualClock{};
+    var conn = Connection.init(allocator, "c", null, .{ .clock = clock.clock() });
+    defer conn.deinit();
+    try peer.openConnectionAdvertising(&conn, 10_000);
+
+    clock.advance(4_000);
+    try conn.sendPerformative(0, .{ .begin = .{ .next_outgoing_id = 0, .incoming_window = 1, .outgoing_window = 1 } }, &.{});
+    peer.clear();
+
+    // A heartbeat exists only to prove liveness, and the Begin just did.
+    clock.advance(4_000);
+    try conn.doWork();
+    try testing.expectEqual(@as(usize, 0), peer.written().len);
+
+    clock.advance(1_000);
+    try conn.doWork();
+    try testing.expect(isHeartbeat(peer.written()));
+}
+
+test "a peer quiet past the timeout we advertised fails the connection" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var clock = ManualClock{};
+    var conn = Connection.init(allocator, "c", null, .{
+        .idle_timeout_ms = 10_000,
+        .clock = clock.clock(),
+    });
+    defer conn.deinit();
+    try peer.openConnectionAdvertising(&conn, 10_000);
+
+    // Exactly the timeout is within the promise; past it is not.
+    clock.advance(10_000);
+    peer.clear();
+    try conn.doWork();
+    try testing.expectEqual(ConnectionState.opened, conn.state);
+
+    clock.advance(1);
+    peer.clear();
+    try testing.expectError(error.IdleTimeout, conn.doWork());
+    try testing.expectEqual(ConnectionState.err, conn.state);
+
+    // The peer is told why, in case it is still listening.
+    const sent = try peer.onlyPerformative();
+    try testing.expectEqualStrings("amqp:resource-limit-exceeded", sent.performative.close.err.?.condition);
+}
+
+test "a heartbeat from the peer postpones the idle timeout" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var clock = ManualClock{};
+    var conn = Connection.init(allocator, "c", null, .{
+        .idle_timeout_ms = 10_000,
+        .clock = clock.clock(),
+    });
+    defer conn.deinit();
+    try peer.openConnection(&conn);
+
+    clock.advance(9_000);
+    const empty_frame = (FrameHeader{
+        .size = frame_mod.frame_header_size,
+        .doff = 2,
+        .frame_type = .amqp,
+        .channel = 0,
+    }).serialize();
+    try conn.onBytesReceived(&empty_frame);
+
+    clock.advance(10_000);
+    try conn.doWork();
+    try testing.expectEqual(ConnectionState.opened, conn.state);
+
+    clock.advance(1);
+    try testing.expectError(error.IdleTimeout, conn.doWork());
+}
+
+test "a clock that steps backwards costs a heartbeat, not a panic" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var clock = ManualClock{ .ms = 5_000 };
+    var conn = Connection.init(allocator, "c", null, .{
+        .idle_timeout_ms = 10_000,
+        .clock = clock.clock(),
+    });
+    defer conn.deinit();
+    try peer.openConnectionAdvertising(&conn, 10_000);
+
+    // A wall clock adjusted backwards used to make the subtraction negative,
+    // and the `@intCast` of that panicked.
+    clock.advance(-4_000);
+    try conn.doWork();
+    try testing.expectEqual(ConnectionState.opened, conn.state);
+    try testing.expectEqual(@as(usize, 0), peer.written().len);
+}
+
+test "idle handling needs a clock, and says so" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var conn = Connection.init(allocator, "c", null, .{ .idle_timeout_ms = 10_000 });
+    defer conn.deinit();
+
+    // Nothing is due before the connection is open, clock or not.
+    try conn.doWork();
+
+    try peer.openConnection(&conn);
+    try testing.expectError(error.NoClockConfigured, conn.doWork());
+
+    // And once one is supplied, both intervals start from now.
+    var clock = ManualClock{};
+    conn.setClock(clock.clock());
+    try conn.doWork();
+    clock.advance(10_001);
+    try testing.expectError(error.IdleTimeout, conn.doWork());
+}
+
+test "a connection with no idle timeouts at either end needs no clock" {
+    const allocator = testing.allocator;
+    var peer = TestPeer.init(allocator);
+    defer peer.deinit();
+    var conn = Connection.init(allocator, "c", null, .{});
+    defer conn.deinit();
+    try peer.openConnection(&conn);
+
+    try conn.doWork();
+    try testing.expectEqual(@as(usize, 0), peer.written().len);
 }
