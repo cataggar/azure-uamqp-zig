@@ -285,7 +285,6 @@ fn decodeArray8(allocator: Allocator, data: []const u8) DecodeError!DecodeResult
     const size: usize = data[1];
     const count: usize = data[2];
     _ = size;
-    if (data.len < 4) return error.UnexpectedEnd;
     return try decodeArrayItems(allocator, data[3..], count, 3);
 }
 
@@ -298,13 +297,17 @@ fn decodeArray32(allocator: Allocator, data: []const u8) DecodeError!DecodeResul
 }
 
 fn decodeArrayItems(allocator: Allocator, data: []const u8, count: usize, header_size: usize) DecodeError!DecodeResult {
-    if (count == 0) {
-        return .{ .value = .{ .array = try allocator.alloc(AmqpValue, 0) }, .bytes_consumed = header_size };
-    }
-
-    // First byte is the shared constructor (format code)
+    // First byte is the shared constructor (format code). An array carries one
+    // even when it is empty, so it is read — and consumed — either way.
     if (data.len < 1) return error.UnexpectedEnd;
     const constructor_code = data[0];
+
+    if (count == 0) {
+        return .{
+            .value = .{ .array = try allocator.alloc(AmqpValue, 0) },
+            .bytes_consumed = header_size + 1,
+        };
+    }
 
     // The count comes off the wire; reject one the remaining data cannot
     // possibly satisfy before allocating for it.

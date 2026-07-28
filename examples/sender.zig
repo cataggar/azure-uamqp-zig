@@ -35,7 +35,7 @@ pub fn main() !void {
     std.debug.print("Target: {?s}\n", .{target.address});
 
     // Demonstrate AMQP value encoding size
-    const size = uamqp.encoder.encodedSize(.{ .string = "hello" });
+    const size = try uamqp.encoder.encodedSize(.{ .string = "hello" });
     std.debug.print("'hello' encodes to {d} bytes\n", .{size});
 
     std.debug.print("Done.\n", .{});
