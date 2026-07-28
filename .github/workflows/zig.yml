@@ -44,6 +44,13 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: zig build test -Doptimize=ReleaseSafe --summary all
 
+      # Autodoc parses every declaration, so a malformed doc comment or a
+      # reference to something that no longer exists fails here rather than
+      # on the day someone tries to read the docs.
+      - name: Docs
+        if: matrix.os == 'ubuntu-latest'
+        run: zig build docs
+
   # Everything above is checked against a peer written from the same reading
   # of the spec as the code under test, so the two can agree and both be
   # wrong. These are implementations nobody here wrote.
