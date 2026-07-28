@@ -154,6 +154,25 @@ pub const TestPeer = struct {
     }
 };
 
+/// A clock the test winds by hand, so timeouts are exercised in microseconds
+/// rather than minutes.
+pub const ManualClock = struct {
+    ms: i64 = 0,
+
+    fn read(context: ?*anyopaque) i64 {
+        const self: *ManualClock = @ptrCast(@alignCast(context.?));
+        return self.ms;
+    }
+
+    pub fn clock(self: *ManualClock) @import("connection.zig").Clock {
+        return .{ .context = self, .read_ms = read };
+    }
+
+    pub fn advance(self: *ManualClock, by: i64) void {
+        self.ms += by;
+    }
+};
+
 /// A connection and session already open, for tests of the layers above them.
 ///
 /// Heap-allocated because a connection and a session both register the
