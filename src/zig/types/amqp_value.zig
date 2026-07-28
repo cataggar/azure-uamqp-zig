@@ -103,6 +103,12 @@ pub const AmqpValue = union(enum) {
     array: []AmqpValue,
     described: Described,
 
+    /// Render as text for logs and diagnostics; see `to_string.zig` for the
+    /// syntax. Used by the standard formatter, so `{f}` works on a value.
+    pub fn format(self: AmqpValue, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return @import("to_string.zig").write(self, writer);
+    }
+
     /// Deep-clone this value, allocating all nested structures.
     pub fn clone(self: AmqpValue, allocator: Allocator) Allocator.Error!AmqpValue {
         return switch (self) {
