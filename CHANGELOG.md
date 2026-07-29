@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
-A hardening and performance pass. No API breaks.
+A hardening and performance pass. No API breaks: 0.2.0 code compiles and
+behaves the same, except where it was relying on a bug.
 
 ### Fixed
 
