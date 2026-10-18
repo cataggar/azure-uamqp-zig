@@ -57,7 +57,7 @@ fn decodeAt(allocator: Allocator, data: []const u8, depth: u8) DecodeError!Decod
         };
     }
 
-    const code: FormatCode = @enumFromInt(code_byte);
+    const code: FormatCode = @fromBackingInt(@intCast(code_byte));
     return switch (code) {
         .described => unreachable, // handled above via code_byte == 0x00 check
 

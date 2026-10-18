@@ -170,7 +170,7 @@ pub const SaslClientIo = struct {
             }
         } else {
             self.state = .err;
-            log.warn("SASL authentication failed with code: {d}", .{@intFromEnum(outcome.code)});
+            log.warn("SASL authentication failed with code: {d}", .{@backingInt(outcome.code)});
             if (self.on_open_complete) |cb| {
                 cb(self.on_open_complete_context, false);
             }
@@ -632,7 +632,7 @@ test "an oversized SASL frame is refused before it is allocated" {
     var hostile: [8]u8 = undefined;
     std.mem.writeInt(u32, hostile[0..4], 65536, .big);
     hostile[4] = 2;
-    hostile[5] = @intFromEnum(frame_mod.FrameType.sasl);
+    hostile[5] = @backingInt(frame_mod.FrameType.sasl);
     std.mem.writeInt(u16, hostile[6..8], 0, .big);
     try testing.expectError(error.FrameTooLarge, sasl.onBytesReceived(&hostile));
 }
@@ -652,7 +652,7 @@ test "an AMQP frame during SASL negotiation is refused" {
     var amqp_frame: [8]u8 = undefined;
     std.mem.writeInt(u32, amqp_frame[0..4], 8, .big);
     amqp_frame[4] = 2;
-    amqp_frame[5] = @intFromEnum(frame_mod.FrameType.amqp);
+    amqp_frame[5] = @backingInt(frame_mod.FrameType.amqp);
     std.mem.writeInt(u16, amqp_frame[6..8], 0, .big);
     try testing.expectError(error.UnexpectedFrameType, sasl.onBytesReceived(&amqp_frame));
 }

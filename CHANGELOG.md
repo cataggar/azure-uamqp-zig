@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+### Changed
+
+- Updated minimum Zig version to `0.17.0` (`@backingInt`, `@fromBackingInt`,
+  `@splat`, struct-of-arrays `@typeInfo`, `addPassthruArgs`, and `.fast` / `.safe`
+  optimize modes).
+
 ## 0.3.0
 
 A hardening and performance pass. No API breaks: 0.2.0 code compiles and

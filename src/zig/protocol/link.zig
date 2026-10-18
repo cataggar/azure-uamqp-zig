@@ -1163,7 +1163,7 @@ test "sends that cannot be represented are refused before anything is written" {
     try fx.grant(&link, 4);
     fx.peer.clear();
 
-    try testing.expectError(error.DeliveryTagTooLong, link.send("m", .{ .delivery_tag = "x" ** 33 }));
+    try testing.expectError(error.DeliveryTagTooLong, link.send("m", .{ .delivery_tag = &@as([33]u8, @splat('x')) }));
 
     link.max_message_size = 4;
     try testing.expectError(error.MessageTooLarge, link.send("too long", .{}));
@@ -1224,6 +1224,16 @@ test "a receive that runs out of memory leaves nothing behind" {
         }
     };
 
-    try testing.checkAllAllocationFailures(testing.allocator, Case.receive, .{});
-    try testing.checkAllAllocationFailures(testing.allocator, Case.send, .{});
+    const det_allocator: Allocator = .{
+        .ptr = testing.allocator.ptr,
+        .vtable = &.{
+            .alloc = testing.allocator.vtable.alloc,
+            .resize = Allocator.noResize,
+            .remap = Allocator.noRemap,
+            .free = testing.allocator.vtable.free,
+        },
+    };
+
+    try testing.checkAllAllocationFailures(det_allocator, Case.receive, .{});
+    try testing.checkAllAllocationFailures(det_allocator, Case.send, .{});
 }
