@@ -607,7 +607,22 @@ test "encoding and decoding a message hold nothing when they run out of memory" 
         }
     };
 
-    try testing.checkAllAllocationFailures(allocator, Case.encodeOnce, .{});
+    // Zig 0.17's `SafeAllocator` backs `testing.allocator` with 8 KiB bump
+    // buckets whose `resize`/`remap` succeed until a bucket boundary is
+    // crossed, which makes the number of `alloc` calls vary across the
+    // repeated runs of `checkAllAllocationFailures`. Disabling in-place
+    // resize keeps every run on the same path while still checking leaks.
+    const det_allocator: Allocator = .{
+        .ptr = allocator.ptr,
+        .vtable = &.{
+            .alloc = allocator.vtable.alloc,
+            .resize = Allocator.noResize,
+            .remap = Allocator.noRemap,
+            .free = allocator.vtable.free,
+        },
+    };
+
+    try testing.checkAllAllocationFailures(det_allocator, Case.encodeOnce, .{});
 
     var msg = try Case.build(allocator);
     defer msg.deinit();
@@ -615,5 +630,5 @@ test "encoding and decoding a message hold nothing when they run out of memory" 
     defer buf.deinit();
     try msg.encode(&buf);
 
-    try testing.checkAllAllocationFailures(allocator, Case.decodeOnce, .{buf.written()});
+    try testing.checkAllAllocationFailures(det_allocator, Case.decodeOnce, .{buf.written()});
 }

@@ -101,7 +101,7 @@ pub fn main() !void {
     {
         var message = uamqp.message.Message.init(gpa);
         defer message.deinit();
-        try message.addBodyData("x" ** 512);
+        try message.addBodyData(&@as([512]u8, @splat('x')));
         try message.putApplicationProperty("operation", .{ .string = "READ" });
         var mbuf = uamqp.encoder.Buffer.initDynamic(gpa);
         defer mbuf.deinit();
@@ -146,7 +146,7 @@ pub fn main() !void {
         try link.attach();
         try conn.onBytesReceived(try peerFrame(gpa, 1, .{ .attach = .{ .name = "s", .handle = 7, .role = .receiver } }, &scratch));
 
-        const payload = "y" ** 1024;
+        const payload = &@as([1024]u8, @splat('y'));
         const iters: usize = 2000;
         var before = counting;
         _ = &before;

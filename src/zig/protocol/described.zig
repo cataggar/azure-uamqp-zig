@@ -75,17 +75,17 @@ pub fn encodePerformative(allocator: Allocator, perf: defs.Performative, buf: *B
 /// Build the described list for one struct: descriptor, then fields in
 /// declaration order with the trailing defaulted ones dropped.
 fn toDescribed(arena: Allocator, comptime T: type, value: T) Error!AmqpValue {
-    const fields = @typeInfo(T).@"struct".fields;
-    const items = try arena.alloc(AmqpValue, fields.len);
+    const info = @typeInfo(T).@"struct";
+    const items = try arena.alloc(AmqpValue, info.field_names.len);
 
     var count: usize = 0;
-    inline for (fields, 0..) |field, i| {
-        const kind = comptime kindOf(T, field.name);
-        const field_value = @field(value, field.name);
-        items[i] = if (isDefault(field, field_value))
+    inline for (info.field_names, info.field_types, info.field_attrs, 0..) |field_name, FieldType, field_attrs, i| {
+        const kind = comptime kindOf(T, field_name);
+        const field_value = @field(value, field_name);
+        items[i] = if (isDefault(FieldType, field_attrs, field_value))
             .null
         else
-            try toValue(arena, field.type, kind, field_value);
+            try toValue(arena, FieldType, kind, field_value);
         // A field is only worth sending if something after it is, so remember
         // where the last meaningful one was.
         if (items[i] != .null) count = i + 1;
@@ -101,8 +101,8 @@ fn toDescribed(arena: Allocator, comptime T: type, value: T) Error!AmqpValue {
 /// True when a field carries exactly the value the peer would assume anyway,
 /// so it can be sent as null. Mandatory fields have no default and so are
 /// never dropped.
-fn isDefault(comptime field: std.builtin.Type.StructField, value: field.type) bool {
-    const default = comptime field.defaultValue();
+fn isDefault(comptime FieldType: type, comptime field_attrs: std.builtin.Type.Struct.FieldAttributes, value: FieldType) bool {
+    const default = comptime field_attrs.defaultValue(FieldType);
     if (default) |d| return std.meta.eql(value, d);
     return false;
 }
@@ -152,7 +152,7 @@ fn intToValue(comptime T: type, comptime kind: Kind, value: T) AmqpValue {
 fn enumToValue(comptime T: type, value: T) AmqpValue {
     if (@hasDecl(T, "toBool")) return .{ .boolean = value.toBool() };
     if (@hasDecl(T, "toSymbol")) return .{ .symbol = value.toSymbol() };
-    return intToValue(@typeInfo(T).@"enum".tag_type, .auto, @intFromEnum(value));
+    return intToValue(@typeInfo(T).@"enum".tag_type, .auto, @backingInt(value));
 }
 
 fn deliveryStateToValue(arena: Allocator, state: defs.DeliveryState) Error!AmqpValue {
@@ -220,11 +220,12 @@ pub fn decodePerformative(allocator: Allocator, data: []const u8) Error!Decoded(
     if (result.value != .described) return error.NotDescribed;
     const code = try descriptorCode(result.value.described);
 
-    inline for (@typeInfo(defs.Performative).@"union".fields) |field| {
-        if (code == field.type.amqp_descriptor) {
-            const body = try fromDescribed(arena.allocator(), field.type, result.value.described.value.*);
+    const union_info = @typeInfo(defs.Performative).@"union";
+    inline for (union_info.field_names, union_info.field_types) |field_name, FieldType| {
+        if (code == FieldType.amqp_descriptor) {
+            const body = try fromDescribed(arena.allocator(), FieldType, result.value.described.value.*);
             return .{
-                .value = @unionInit(defs.Performative, field.name, body),
+                .value = @unionInit(defs.Performative, field_name, body),
                 .bytes_consumed = result.bytes_consumed,
                 .arena = arena,
             };
@@ -257,15 +258,16 @@ fn fromDescribed(arena: Allocator, comptime T: type, body: AmqpValue) Error!T {
     };
 
     var result: T = undefined;
-    inline for (@typeInfo(T).@"struct".fields, 0..) |field, i| {
-        const kind = comptime kindOf(T, field.name);
+    const info = @typeInfo(T).@"struct";
+    inline for (info.field_names, info.field_types, info.field_attrs, 0..) |field_name, FieldType, field_attrs, i| {
+        const kind = comptime kindOf(T, field_name);
         // Absent, or present and null, both mean "the default" — and for a
         // field with no default, both mean the frame is malformed.
         const item: AmqpValue = if (i < items.len) items[i] else .null;
-        @field(result, field.name) = if (item == .null) blk: {
-            const default = comptime field.defaultValue();
+        @field(result, field_name) = if (item == .null) blk: {
+            const default = comptime field_attrs.defaultValue(FieldType);
             break :blk default orelse return error.MissingMandatoryField;
-        } else try fromValue(arena, field.type, kind, item);
+        } else try fromValue(arena, FieldType, kind, item);
     }
     // Fields beyond the ones this version knows are ignored, which is how the
     // spec says to stay compatible with a later peer.
@@ -792,7 +794,8 @@ test "mandatory-ness comes from the absence of a default" {
         .{ defs.SaslInit, "mechanism" },
         .{ defs.SaslOutcome, "code" },
     }) |entry| {
-        const field = std.meta.fieldInfo(entry[0], @field(std.meta.FieldEnum(entry[0]), entry[1]));
-        try testing.expect(field.defaultValue() == null);
+        const idx = @backingInt(@field(std.meta.FieldEnum(entry[0]), entry[1]));
+        const info = @typeInfo(entry[0]).@"struct";
+        try testing.expect(info.field_attrs[idx].defaultValue(info.field_types[idx]) == null);
     }
 }

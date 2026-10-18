@@ -1,7 +1,7 @@
 # azure-uamqp-zig
 
 An AMQP 1.0 client library, ported from `Azure/azure-uamqp-c` v1.2.12 to idiomatic Zig
-(`zig 0.16.0`). Everything here is Zig: the C tree it was ported from has been deleted.
+(`zig 0.17.0`). Everything here is Zig: the C tree it was ported from has been deleted.
 
 ## Layout
 

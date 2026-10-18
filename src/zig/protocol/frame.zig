@@ -39,7 +39,7 @@ pub const FrameHeader = struct {
     pub fn parse(data: *const [frame_header_size]u8) error{InvalidFrame}!FrameHeader {
         const size = std.mem.readInt(u32, data[0..4], .big);
         const doff = data[4];
-        const frame_type: FrameType = @enumFromInt(data[5]);
+        const frame_type: FrameType = @fromBackingInt(@intCast(data[5]));
         const channel = std.mem.readInt(u16, data[6..8], .big);
 
         if (size < frame_header_size) return error.InvalidFrame;
@@ -60,7 +60,7 @@ pub const FrameHeader = struct {
         var buf: [frame_header_size]u8 = undefined;
         std.mem.writeInt(u32, buf[0..4], self.size, .big);
         buf[4] = self.doff;
-        buf[5] = @intFromEnum(self.frame_type);
+        buf[5] = @backingInt(self.frame_type);
         std.mem.writeInt(u16, buf[6..8], self.channel, .big);
         return buf;
     }

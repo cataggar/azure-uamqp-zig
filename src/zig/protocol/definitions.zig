@@ -292,8 +292,8 @@ pub const TerminusExpiryPolicy = enum {
     }
 
     pub fn fromSymbol(symbol: []const u8) ?TerminusExpiryPolicy {
-        inline for (@typeInfo(TerminusExpiryPolicy).@"enum".fields) |field| {
-            const value: TerminusExpiryPolicy = @enumFromInt(field.value);
+        inline for (@typeInfo(TerminusExpiryPolicy).@"enum".field_values) |field_value| {
+            const value: TerminusExpiryPolicy = @fromBackingInt(@intCast(field_value));
             if (std.mem.eql(u8, value.toSymbol(), symbol)) return value;
         }
         return null;
@@ -471,8 +471,8 @@ test "Performative descriptor codes" {
 }
 
 test "SaslCode values" {
-    try std.testing.expectEqual(@as(u8, 0), @intFromEnum(SaslCode.ok));
-    try std.testing.expectEqual(@as(u8, 1), @intFromEnum(SaslCode.auth));
+    try std.testing.expectEqual(@as(u8, 0), @backingInt(SaslCode.ok));
+    try std.testing.expectEqual(@as(u8, 1), @backingInt(SaslCode.auth));
 }
 
 test "TerminusExpiryPolicy symbol conversion" {

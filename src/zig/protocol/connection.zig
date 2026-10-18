@@ -573,7 +573,7 @@ pub const Connection = struct {
         payload: []const u8,
     ) !void {
         self.send_buf.reset();
-        try self.send_buf.writeAll(&[_]u8{0} ** frame_mod.frame_header_size);
+        try self.send_buf.writeAll(&@as([frame_mod.frame_header_size]u8, @splat(0)));
         // Retaining the capacity means reclaiming it in one block, which can
         // itself fail. Reporting that as the allocation failure it is beats
         // carrying on quietly: `checkAllAllocationFailures` catches exactly
@@ -1325,7 +1325,7 @@ test "sending frames of the same size stops allocating" {
             .incoming_window = 1,
             .next_outgoing_id = 0,
             .outgoing_window = 1,
-        } }, "0123456789" ** 8);
+        } }, &@as([80]u8, @splat('0')));
     }
 
     const settled = counting.count;
@@ -1335,7 +1335,7 @@ test "sending frames of the same size stops allocating" {
             .incoming_window = 1,
             .next_outgoing_id = 0,
             .outgoing_window = 1,
-        } }, "0123456789" ** 8);
+        } }, &@as([80]u8, @splat('0')));
     }
     // Sixty-four frames, no allocation: the send buffer is reused, and the
     // frame is built in it rather than assembled out of two throwaway buffers.

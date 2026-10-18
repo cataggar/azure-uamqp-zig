@@ -621,7 +621,17 @@ test "a queued send that runs out of memory leaves nothing behind" {
         }
     };
 
-    try testing.checkAllAllocationFailures(testing.allocator, Case.once, .{});
+    const det_allocator: Allocator = .{
+        .ptr = testing.allocator.ptr,
+        .vtable = &.{
+            .alloc = testing.allocator.vtable.alloc,
+            .resize = Allocator.noResize,
+            .remap = Allocator.noRemap,
+            .free = testing.allocator.vtable.free,
+        },
+    };
+
+    try testing.checkAllAllocationFailures(det_allocator, Case.once, .{});
 }
 
 /// An allocator that can be made to refuse the next request, for testing what

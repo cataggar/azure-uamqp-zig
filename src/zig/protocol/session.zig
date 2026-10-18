@@ -538,7 +538,7 @@ test "link endpoints survive the session's storage growing" {
     var names: [64][8]u8 = undefined;
     var handles: [64]u32 = undefined;
     for (&names, 0..) |*name, i| {
-        name.* = ("link-" ++ "\x00" ** 3).*;
+        name.* = ("link-\x00\x00\x00").*;
         _ = std.fmt.bufPrint(name, "link-{d:0>2}", .{i}) catch unreachable;
         handles[i] = try session.createLinkEndpoint(name);
     }

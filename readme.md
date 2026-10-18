@@ -4,7 +4,7 @@ An AMQP 1.0 client library for Zig, ported from
 [Azure/azure-uamqp-c](https://github.com/Azure/azure-uamqp-c) v1.2.12.
 
 Everything is Zig — the C sources this began as have been removed. It targets
-Zig 0.16.0.
+Zig 0.17.0.
 
 ## Design
 
@@ -107,7 +107,7 @@ zig fmt src examples interop build.zig
 ```
 
 CI runs the same steps on Linux, Windows and macOS, plus the suite under
-`-Doptimize=ReleaseSafe`.
+`-Doptimize=safe`.
 
 ### Interop
 

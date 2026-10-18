@@ -18,7 +18,7 @@ one fix, one module — so it can be reviewed and reverted on its own.
 ```sh
 zig build                                        # library, examples, interop client
 zig build test --summary all                     # the whole suite
-zig build test -Doptimize=ReleaseSafe            # again, with release semantics
+zig build test -Doptimize=safe                   # again, with release semantics
 zig test src/zig/uamqp.zig --test-filter "map"   # one test by name substring
 zig fmt --check src examples interop build.zig
 ```

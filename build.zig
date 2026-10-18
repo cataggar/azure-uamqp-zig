@@ -75,17 +75,17 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(interop_exe);
     const run_interop = b.addRunArtifact(interop_exe);
     run_interop.step.dependOn(&interop_exe.step);
-    if (b.args) |args| run_interop.addArgs(args);
+    run_interop.addPassthruArgs();
     const interop_step = b.step("interop", "Run the interop check against a broker");
     interop_step.dependOn(&run_interop.step);
 
-    // Benchmarks. Always ReleaseFast: a debug build measures the allocator and
+    // Benchmarks. Always fast: a debug build measures the allocator and
     // the safety checks rather than the codec, which is worse than no number
     // at all because it looks like one.
     const bench_mod = b.createModule(.{
         .root_source_file = b.path("bench/main.zig"),
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = .fast,
     });
     bench_mod.addImport("uamqp", lib_mod);
     const bench_exe = b.addExecutable(.{

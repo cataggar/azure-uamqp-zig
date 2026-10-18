@@ -1,8 +1,8 @@
 .{
     .name = .uamqp,
     .fingerprint = 0x52a4693c691c7395,
-    .version = "0.3.0",
-    .minimum_zig_version = "0.16.0",
+    .version = "0.3.1",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",

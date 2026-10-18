@@ -119,11 +119,11 @@ const Compound = struct {
 
     fn write(self: Compound, buf: *Buffer, small_code: FormatCode, large_code: FormatCode) EncodeError!void {
         if (self.small) {
-            try buf.writeByte(@intFromEnum(small_code));
+            try buf.writeByte(@backingInt(small_code));
             try buf.writeByte(@intCast(self.body + 1));
             try buf.writeByte(@intCast(self.count));
         } else {
-            try buf.writeByte(@intFromEnum(large_code));
+            try buf.writeByte(@backingInt(large_code));
             try writeU32(buf, @intCast(self.body + 4));
             try writeU32(buf, @intCast(self.count));
         }
@@ -137,84 +137,84 @@ fn writeU32(buf: *Buffer, v: u32) EncodeError!void {
 /// Encode an AmqpValue into AMQP 1.0 binary wire format.
 pub fn encode(value: AmqpValue, buf: *Buffer) EncodeError!void {
     switch (value) {
-        .null => try buf.writeByte(@intFromEnum(FormatCode.null)),
+        .null => try buf.writeByte(@backingInt(FormatCode.null)),
         .boolean => |v| {
-            try buf.writeByte(@intFromEnum(if (v) FormatCode.boolean_true else FormatCode.boolean_false));
+            try buf.writeByte(@backingInt(if (v) FormatCode.boolean_true else FormatCode.boolean_false));
         },
         .ubyte => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.ubyte));
+            try buf.writeByte(@backingInt(FormatCode.ubyte));
             try buf.writeByte(v);
         },
         .ushort => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.ushort));
+            try buf.writeByte(@backingInt(FormatCode.ushort));
             try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u16, v, .big)));
         },
         .uint => |v| {
             if (v == 0) {
-                try buf.writeByte(@intFromEnum(FormatCode.uint_0));
+                try buf.writeByte(@backingInt(FormatCode.uint_0));
             } else if (v <= 0xFF) {
-                try buf.writeByte(@intFromEnum(FormatCode.smalluint));
+                try buf.writeByte(@backingInt(FormatCode.smalluint));
                 try buf.writeByte(@truncate(v));
             } else {
-                try buf.writeByte(@intFromEnum(FormatCode.uint));
+                try buf.writeByte(@backingInt(FormatCode.uint));
                 try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u32, v, .big)));
             }
         },
         .ulong => |v| {
             if (v == 0) {
-                try buf.writeByte(@intFromEnum(FormatCode.ulong_0));
+                try buf.writeByte(@backingInt(FormatCode.ulong_0));
             } else if (v <= 0xFF) {
-                try buf.writeByte(@intFromEnum(FormatCode.smallulong));
+                try buf.writeByte(@backingInt(FormatCode.smallulong));
                 try buf.writeByte(@truncate(v));
             } else {
-                try buf.writeByte(@intFromEnum(FormatCode.ulong));
+                try buf.writeByte(@backingInt(FormatCode.ulong));
                 try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u64, v, .big)));
             }
         },
         .byte => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.byte));
+            try buf.writeByte(@backingInt(FormatCode.byte));
             try buf.writeByte(@bitCast(v));
         },
         .short => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.short));
+            try buf.writeByte(@backingInt(FormatCode.short));
             try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u16, @as(u16, @bitCast(v)), .big)));
         },
         .int => |v| {
             if (v >= -128 and v <= 127) {
-                try buf.writeByte(@intFromEnum(FormatCode.smallint));
+                try buf.writeByte(@backingInt(FormatCode.smallint));
                 try buf.writeByte(@bitCast(@as(i8, @intCast(v))));
             } else {
-                try buf.writeByte(@intFromEnum(FormatCode.int));
+                try buf.writeByte(@backingInt(FormatCode.int));
                 try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u32, @as(u32, @bitCast(v)), .big)));
             }
         },
         .long => |v| {
             if (v >= -128 and v <= 127) {
-                try buf.writeByte(@intFromEnum(FormatCode.smalllong));
+                try buf.writeByte(@backingInt(FormatCode.smalllong));
                 try buf.writeByte(@bitCast(@as(i8, @intCast(v))));
             } else {
-                try buf.writeByte(@intFromEnum(FormatCode.long));
+                try buf.writeByte(@backingInt(FormatCode.long));
                 try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u64, @as(u64, @bitCast(v)), .big)));
             }
         },
         .float => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.float));
+            try buf.writeByte(@backingInt(FormatCode.float));
             try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u32, @as(u32, @bitCast(v)), .big)));
         },
         .double => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.double));
+            try buf.writeByte(@backingInt(FormatCode.double));
             try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u64, @as(u64, @bitCast(v)), .big)));
         },
         .char => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.char));
+            try buf.writeByte(@backingInt(FormatCode.char));
             try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u32, @as(u32, v), .big)));
         },
         .timestamp => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.timestamp));
+            try buf.writeByte(@backingInt(FormatCode.timestamp));
             try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u64, @as(u64, @bitCast(v)), .big)));
         },
         .uuid => |v| {
-            try buf.writeByte(@intFromEnum(FormatCode.uuid));
+            try buf.writeByte(@backingInt(FormatCode.uuid));
             try buf.writeAll(&v);
         },
         .binary => |v| try writeVariable(buf, v, FormatCode.binary_8, FormatCode.binary_32),
@@ -222,7 +222,7 @@ pub fn encode(value: AmqpValue, buf: *Buffer) EncodeError!void {
         .symbol => |v| try writeVariable(buf, v, FormatCode.symbol_8, FormatCode.symbol_32),
         .list => |items| {
             if (items.len == 0) {
-                try buf.writeByte(@intFromEnum(FormatCode.list_0));
+                try buf.writeByte(@backingInt(FormatCode.list_0));
                 return;
             }
 
@@ -246,7 +246,7 @@ pub fn encode(value: AmqpValue, buf: *Buffer) EncodeError!void {
             const element_code = try arrayConstructor(items);
             const layout = try Compound.init(items.len, try arrayBodySize(items, element_code));
             try layout.write(buf, .array_8, .array_32);
-            try buf.writeByte(@intFromEnum(element_code));
+            try buf.writeByte(@backingInt(element_code));
             for (items) |item| {
                 try encodeElement(item, element_code, buf);
             }
@@ -399,7 +399,7 @@ fn encodeElement(value: AmqpValue, element_code: FormatCode, buf: *Buffer) Encod
             const nested_code = try arrayConstructor(items);
             const body = try arrayBodySize(items, nested_code);
             try writeWideCompound(buf, body, items.len);
-            try buf.writeByte(@intFromEnum(nested_code));
+            try buf.writeByte(@backingInt(nested_code));
             for (items) |item| try encodeElement(item, nested_code, buf);
         },
         .described => return error.UnsupportedArrayElement,
@@ -476,10 +476,10 @@ fn allShort(items: []const AmqpValue) bool {
 
 fn writeVariable(buf: *Buffer, data: []const u8, small_code: FormatCode, large_code: FormatCode) !void {
     if (data.len <= 0xFF) {
-        try buf.writeByte(@intFromEnum(small_code));
+        try buf.writeByte(@backingInt(small_code));
         try buf.writeByte(@intCast(data.len));
     } else {
-        try buf.writeByte(@intFromEnum(large_code));
+        try buf.writeByte(@backingInt(large_code));
         try buf.writeAll(&std.mem.toBytes(std.mem.nativeTo(u32, @intCast(data.len), .big)));
     }
     try buf.writeAll(data);
@@ -605,7 +605,7 @@ test "arrays of every element type round trip" {
     var doubles = [_]AmqpValue{ .{ .double = 1.5 }, .{ .double = -0.25 } };
     var chars = [_]AmqpValue{ .{ .char = 'a' }, .{ .char = 0x1F600 } };
     var timestamps = [_]AmqpValue{ .{ .timestamp = 1234567890 }, .{ .timestamp = -1 } };
-    var uuids = [_]AmqpValue{ .{ .uuid = [_]u8{0xAB} ** 16 }, .{ .uuid = [_]u8{0xCD} ** 16 } };
+    var uuids = [_]AmqpValue{ .{ .uuid = @splat(0xAB) }, .{ .uuid = @splat(0xCD) } };
 
     for ([_][]AmqpValue{
         &symbols, &strings, &binaries, &booleans,   &ubytes, &bytes,
@@ -637,7 +637,7 @@ test "an array of symbols keeps its element boundaries" {
 }
 
 test "an array constructor fits the longest element" {
-    const long_symbol = "s" ** 300;
+    const long_symbol = &@as([300]u8, @splat('s'));
     var items = [_]AmqpValue{ .{ .symbol = "short" }, .{ .symbol = long_symbol } };
 
     const allocator = std.testing.allocator;
@@ -776,11 +776,11 @@ test "encodedSize agrees with encode for every type" {
         .{ .double = 1.25 },
         .{ .char = 'A' },
         .{ .timestamp = 999 },
-        .{ .uuid = [_]u8{7} ** 16 },
+        .{ .uuid = @splat(7) },
         .{ .binary = "bytes" },
         .{ .string = "hello" },
         .{ .symbol = "amqp:accepted:list" },
-        .{ .string = "l" ** 300 },
+        .{ .string = &@as([300]u8, @splat('l')) },
         .{ .list = &.{} },
         .{ .list = &list_items },
         .{ .map = &map_entries },
